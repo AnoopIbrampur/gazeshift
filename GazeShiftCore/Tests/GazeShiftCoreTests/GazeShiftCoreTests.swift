@@ -253,6 +253,61 @@ final class GazeShiftCoreTests: XCTestCase {
         XCTAssertEqual(window.finish().rejectionCounts[.missing], 20)
     }
 
+    // Break caught: erasing error direction or summarizing received/rejected features as accepted data.
+    func testAcceptedWindowDiagnosticsKeepSignedMediansAndRawPopulationSpread() throws {
+        let g = try geometry()
+        let model = try fitted(g)
+        let features = try [(0.0, 0.0), (1, -1), (2, 1), (3, -2)].map {
+            try EyeFeatures(horizontal: $0.0, vertical: $0.1)
+        }
+        for (target, dx, dy) in [(HeldOutTarget.upperLeft, 185.0, 65.0), (.lowerRight, 35, -135)] {
+            var window = try HeldOutWindow(target: target, pass: 1, presentedAt: 0, geometry: g)
+            for (slot, feature) in features.enumerated() {
+                let time = 0.501 + Double(slot) * 0.05
+                try window.record(slot: slot, now: time, observation: observation(feature, time: time), calibration: model)
+            }
+            let rejected = try EyeFeatures(horizontal: 100, vertical: 100)
+            try window.record(slot: 4, now: 0.701,
+                              observation: observation(rejected, time: 0.701, blink: 0.8), calibration: model)
+            let result = window.finish()
+            XCTAssertEqual(result.validPredictions, 4, "Finite off-screen predictions remain accepted")
+            XCTAssertEqual(result.rejectionCounts[.closedEyes], 1)
+            XCTAssertEqual(try XCTUnwrap(result.medianDXPoints), dx, accuracy: 0.001)
+            XCTAssertEqual(try XCTUnwrap(result.medianDYPoints), dy, accuracy: 0.001)
+            let summary = try XCTUnwrap(result.featureSummary)
+            XCTAssertEqual(summary.horizontalMean, 1.5, accuracy: 1e-12)
+            XCTAssertEqual(summary.verticalMean, -0.5, accuracy: 1e-12)
+            XCTAssertEqual(summary.horizontalPopulationSD, 1.118033988749895, accuracy: 1e-12)
+            XCTAssertEqual(summary.verticalPopulationSD, 1.118033988749895, accuracy: 1e-12)
+        }
+    }
+
+    // Break caught: invented zero diagnostics for an unmeasured window or nonfinite public summary.
+    func testDiagnosticsAreUnavailableForEmptyWindowsAndFiniteForExtremeFeatures() throws {
+        let g = try geometry()
+        let empty = try HeldOutWindow(target: .upperLeft, pass: 1, presentedAt: 0, geometry: g).finish()
+        let missing = try HeldOutReport(windows: [], geometry: g).novelWindows
+        for result in [empty] + missing {
+            XCTAssertNil(result.medianDXPoints)
+            XCTAssertNil(result.medianDYPoints)
+            XCTAssertNil(result.featureSummary)
+        }
+        XCTAssertNil(EyeFeatureSummary(features: []))
+        let extremes = try [-Double.greatestFiniteMagnitude, Double.greatestFiniteMagnitude].map {
+            try EyeFeatures(horizontal: $0, vertical: 2)
+        }
+        let summary = try XCTUnwrap(EyeFeatureSummary(features: extremes))
+        XCTAssertEqual(summary.horizontalMean, 0)
+        XCTAssertEqual(summary.horizontalPopulationSD, Double.greatestFiniteMagnitude)
+        XCTAssertEqual(summary.verticalMean, 2)
+        XCTAssertEqual(summary.verticalPopulationSD, 0)
+        let single = try XCTUnwrap(EyeFeatureSummary(features: [EyeFeatures(horizontal: -3, vertical: 4)]))
+        XCTAssertEqual(single.horizontalMean, -3)
+        XCTAssertEqual(single.verticalMean, 4)
+        XCTAssertEqual(single.horizontalPopulationSD, 0)
+        XCTAssertEqual(single.verticalPopulationSD, 0)
+    }
+
     private func trainingSamples() throws -> [CalibrationSample] {
         try [-1.0, 0, 1].flatMap { h in
             try [-1.0, 0, 1].map { v in
