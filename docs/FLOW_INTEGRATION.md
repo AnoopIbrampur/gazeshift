@@ -68,3 +68,11 @@ With Xcode installed, a plain `swift test` (or ⌘U on the package) works.
 - **Interim feed:** `AirTraceModel.attach(snapshots: capture.$snapshot)` records each new `rawEyeIdentity` frame and each new `snapshot.hand`. This is NOT the ordered capture-event feed in step 6. Snapshots can skip a frame's eyes, and empty Vision results are not delivered, so loss is caught by `expireInputs` rather than immediately. `ingestEyes`/`ingestHand`/`expireInputs` exist on the model for the step-6 wiring from `CaptureController`. Once that's in place, drop `attach`.
 - Duplicate `CalibrationRun`/`CalibrationScreen` are removed from this branch; `GazeSession` is the only calibrator.
 - Not built for iOS on this branch since the merge; the Flow logic tests pass (24/24, fixtures only).
+
+## ANO-11 green-outline simulated blur (branch `anoop/ano-11-green-blur`)
+
+- `CameraView` gets an optional `composite` uniform and a **separate** `compositeVertex`/`compositeFragment` pipeline built from the bundled `CompositeShaders.metal`, which is now in Copy Bundle Resources. With no layers, or if that shader fails, it draws the unchanged `cameraFragment` and reports the failure through `onCompositeFailure`.
+- `ContentView` recomputes `CompositionPlanner.plan` every frame once a region is accepted. Live gaze is `gaze.marker(at:)` **only** when the scene is fresh and `gaze.report?.passesCompleteGate`. The margin is that report's p90.
+- The viewport overlay draws a **green ellipse outline** around the simulated blind region (and a dashed white box for a copy destination). It's drawn only when the plan has those layers, so the outline and blur appear and clear together.
+- `ComparisonControls` appears under AIR MAP after Accept. It shows the label, the context text ("Approximates a central blind spot … Not a medical simulation …") and orange notes explaining why the view is still original (no passed report, region not usable in this camera mode, no offset, shader unavailable).
+- Verified: iOS Simulator `build-for-testing` succeeded with Xcode 27; `CompositeShaders.metal` is in the built `.app` and compiles into a render pipeline on the Mac's Apple M4 GPU (not an iPhone GPU); Flow 24/24. **Not run on the phone.** With the current failed P2 gates, the phone will show the notes, not the blur.

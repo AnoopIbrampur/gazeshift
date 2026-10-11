@@ -2,11 +2,16 @@ import SwiftUI
 import MetalKit
 import CoreVideo
 import simd
+import GazeShiftFlow
 
 struct CameraView: UIViewRepresentable {
     let packet: RenderPacket?
     let onFailure: (String) -> Void
-    func makeCoordinator() -> Renderer { Renderer(onFailure: onFailure) }
+    /// Copy/simulated-blur layers (ANO-10/11). Nil draws the unchanged original camera pipeline.
+    var composite: CompositeUniformValues.GPU? = nil
+    /// Reports that the simulation shader is unavailable so callers never claim a blur that is not drawn.
+    var onCompositeFailure: (String) -> Void = { _ in }
+    func makeCoordinator() -> Renderer { Renderer(onFailure: onFailure, onCompositeFailure: onCompositeFailure) }
     func makeUIView(context: Context) -> MTKView {
         let view = MTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.isPaused = true
@@ -20,12 +25,16 @@ struct CameraView: UIViewRepresentable {
     }
     func updateUIView(_ view: MTKView, context: Context) {
         context.coordinator.packet = packet
+        context.coordinator.composite = composite
         view.draw()
     }
 
     final class Renderer: NSObject, MTKViewDelegate {
         var packet: RenderPacket?
+        var composite: CompositeUniformValues.GPU?
         private let onFailure: (String) -> Void
+        private let onCompositeFailure: (String) -> Void
+        private var compositePipeline: MTLRenderPipelineState?
         private var commands: MTLCommandQueue?
         private var pipeline: MTLRenderPipelineState?
         private var cache: CVMetalTextureCache?
@@ -33,7 +42,10 @@ struct CameraView: UIViewRepresentable {
         private var reportedFailure: String?
         private var drawCount = 0
         private var lastDiagnosticAt: TimeInterval = 0
-        init(onFailure: @escaping (String) -> Void) { self.onFailure = onFailure }
+        init(onFailure: @escaping (String) -> Void, onCompositeFailure: @escaping (String) -> Void) {
+            self.onFailure = onFailure
+            self.onCompositeFailure = onCompositeFailure
+        }
 
         func configure(_ view: MTKView) {
             guard let device = view.device, let commands = device.makeCommandQueue() else { fail("Metal unavailable"); return }
@@ -46,6 +58,7 @@ struct CameraView: UIViewRepresentable {
                 descriptor.fragmentFunction = library.makeFunction(name: "cameraFragment")
                 descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
                 pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+                configureComposite(device: device, pixelFormat: view.colorPixelFormat)
                 guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache) == kCVReturnSuccess else { fail("Camera texture cache unavailable"); return }
                 self.commands = commands
             } catch { fail("Camera shader: \(error.localizedDescription)") }
@@ -73,10 +86,16 @@ struct CameraView: UIViewRepresentable {
                     let x = packet.geometry.displayToRaw(CGPoint(x: 1, y: 0))
                     let yPoint = packet.geometry.displayToRaw(CGPoint(x: 0, y: 1))
                     var inverse = simd_float3x3(columns: (SIMD3(Float(x.x-origin.x), Float(x.y-origin.y), 0), SIMD3(Float(yPoint.x-origin.x), Float(yPoint.y-origin.y), 0), SIMD3(Float(origin.x), Float(origin.y), 1)))
-                    encoder.setRenderPipelineState(pipeline)
                     encoder.setFragmentTexture(yTexture, index: 0)
                     encoder.setFragmentTexture(cbcrTexture, index: 1)
                     encoder.setFragmentBytes(&inverse, length: MemoryLayout<simd_float3x3>.stride, index: 0)
+                    if var layers = composite, let compositePipeline {
+                        // Same textures and display→raw mapping; layers sample original pixels, blur last.
+                        encoder.setRenderPipelineState(compositePipeline)
+                        encoder.setFragmentBytes(&layers, length: MemoryLayout<CompositeUniformValues.GPU>.stride, index: 1)
+                    } else {
+                        encoder.setRenderPipelineState(pipeline)
+                    }
                     encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
                 } else { fail("Camera texture conversion failed") }
             }
@@ -105,6 +124,25 @@ struct CameraView: UIViewRepresentable {
             }
             let uv = packet.geometry.displayToRaw(CGPoint(x: 0.5, y: 0.5))
             NSLog("GazeShift renderer draw=%d image=%dx%d drawable=%.0fx%.0f centerY=%d centerUV=%.3f,%.3f ageMs=%.1f", drawCount, CVPixelBufferGetWidth(image), CVPixelBufferGetHeight(image), drawableSize.width, drawableSize.height, centerLuma, uv.x, uv.y, (now - (packet.identity.estimatedCaptureAt ?? packet.identity.receivedAt)) * 1000)
+        }
+
+        /// Separate library so a simulation-shader problem can never break the original camera pipeline.
+        private func configureComposite(device: MTLDevice, pixelFormat: MTLPixelFormat) {
+            do {
+                guard let url = Bundle.main.url(forResource: "CompositeShaders", withExtension: "metal") else {
+                    reportComposite("Simulation shader resource missing"); return
+                }
+                let library = try device.makeLibrary(source: String(contentsOf: url, encoding: .utf8), options: nil)
+                let descriptor = MTLRenderPipelineDescriptor()
+                descriptor.vertexFunction = library.makeFunction(name: "compositeVertex")
+                descriptor.fragmentFunction = library.makeFunction(name: "compositeFragment")
+                descriptor.colorAttachments[0].pixelFormat = pixelFormat
+                compositePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+            } catch { reportComposite("Simulation shader: \(error.localizedDescription)") }
+        }
+
+        private func reportComposite(_ message: String) {
+            DispatchQueue.main.async { self.onCompositeFailure(message) }
         }
 
         private func fail(_ message: String) {
