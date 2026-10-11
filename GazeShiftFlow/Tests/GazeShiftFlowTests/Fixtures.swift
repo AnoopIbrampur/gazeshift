@@ -22,7 +22,8 @@ enum Fixture {
     }
 
     static func calibration(_ geometry: RenderGeometry) -> GazeCalibration {
-        let samples = CalibrationRunPolicy.trainingTargets.map { normalized in
+        let axis = [0.15, 0.5, 0.85]
+        let samples = axis.flatMap { y in axis.map { x in ScreenPoint(x: x, y: y) } }.map { normalized in
             let target = ScreenPoint(x: normalized.x * geometry.width, y: normalized.y * geometry.height)
             return CalibrationSample(features: features(looking: target), target: target)
         }
