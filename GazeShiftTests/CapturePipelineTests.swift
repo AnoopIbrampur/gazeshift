@@ -2,7 +2,23 @@ import XCTest
 import ImageIO
 import Combine
 import CoreVideo
+import Metal
 @testable import GazeShift
+
+/// Exercises the bundled source and real simulator GPU compiler, not physical camera pixels.
+final class CompositeShaderTests: XCTestCase {
+    func testBundledCompositeShaderBuildsBGRA8RenderPipeline() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice(), "A real Metal device is required")
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "CompositeShaders", withExtension: "metal"))
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let library = try device.makeLibrary(source: source, options: nil)
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = try XCTUnwrap(library.makeFunction(name: "compositeVertex"))
+        descriptor.fragmentFunction = try XCTUnwrap(library.makeFunction(name: "compositeFragment"))
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        _ = try device.makeRenderPipelineState(descriptor: descriptor)
+    }
+}
 
 final class CapturePipelineTests: XCTestCase {
     private func identity(_ timestamp: Double, receipt: Double = 10, generation: UInt64 = 1) -> FrameIdentity {
