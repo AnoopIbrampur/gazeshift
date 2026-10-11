@@ -371,71 +371,104 @@ struct AirMapOverlay: View {
 }
 
 
-/// ANO-8 controls: explicit Accept/Redo and copy-offset nudges. Touch never draws the region.
+/// Explicit drawing/review actions; touch controls never draw the region.
 struct AirMapControls: View {
     @ObservedObject var model: AirTraceModel
-    /// Why air mapping cannot start yet; nil when it can.
     let startBlocker: String?
+    let cameraMode: CaptureMode
     let onStart: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("AIR MAP").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            if let flow = model.flow {
-                HStack {
-                    if flow.state == .armed || flow.state == .tracing {
-                        Button("Finish shape") { model.finish() }
-                            .buttonStyle(.borderedProminent).accessibilityIdentifier("airMapFinish")
-                    } else {
-                        Button("Draw again") { model.end(); onStart() }
-                            .buttonStyle(.bordered).disabled(startBlocker != nil).accessibilityIdentifier("airMapRedo")
-                    }
-                    Button("Accept region") { model.accept() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(flow.state != .candidateReady)
-                        .accessibilityIdentifier("airMapAccept")
-                    Spacer()
-                    Button("Close") { model.end() }.buttonStyle(.bordered)
-                }
+        VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+            if model.reviewedRegion != nil {
+                Text(cameraMode == .setupFront
+                     ? "Region ready. Adjust the copy, then select Rear."
+                     : "Region ready. Adjust the copy to compare.")
+                    .font(.subheadline).foregroundStyle(ScreenStyle.secondary)
+                offsetControls
+                if cameraMode == .setupFront { redrawButton }
+            } else if let flow = model.flow {
                 Text(instruction(flow.state)).font(.subheadline)
-                Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)
-
-            } else {
-                Button("Start drawing", action: onStart)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(startBlocker != nil)
-                    .accessibilityIdentifier("airMapStart")
-                if let startBlocker { Text(startBlocker).font(.caption).foregroundStyle(.secondary) }
-                if model.reviewedRegion != nil {
-                    Text("Accepted screen-fixed region. Switch to Rear scene to use it over live rear imagery.")
-                        .font(.caption)
+                HStack(spacing: ScreenStyle.spacing) {
+                    switch flow.state {
+                    case .armed, .tracing:
+                        Button("Finish shape") { model.finish() }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("airMapFinish")
+                    case .candidateReady:
+                        Button("Accept region") { model.accept() }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("airMapAccept")
+                        redrawButton
+                    default:
+                        redrawButton
+                    }
+                    Spacer(minLength: 0)
+                    Button("Cancel") { model.end() }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("airMapCancel")
                 }
+                .controlSize(.large).buttonBorderShape(.capsule)
+                if flow.candidate != nil { offsetControls }
+            } else {
+                Text(startBlocker ?? "Trace a closed loop with your index finger.")
+                    .font(.subheadline).foregroundStyle(ScreenStyle.secondary)
+                Button(action: onStart) {
+                    Text("Start drawing").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large).buttonBorderShape(.capsule)
+                .disabled(startBlocker != nil)
+                .accessibilityIdentifier("airMapStart")
             }
-            if model.flow?.candidate != nil || model.reviewedRegion != nil { offsetControls }
         }
     }
 
+    private var redrawButton: some View {
+        Button("Redraw") { model.end(); onStart() }
+            .buttonStyle(.bordered).controlSize(.large).buttonBorderShape(.capsule)
+            .disabled(startBlocker != nil)
+            .accessibilityIdentifier("airMapRedo")
+    }
+
     private var offsetControls: some View {
-        HStack(spacing: 6) {
-            Text("Copy offset").font(.caption)
-            Button("←") { model.nudgeOffset(dx: -AirMapPolicy.offsetStep, dy: 0) }
-            Button("→") { model.nudgeOffset(dx: AirMapPolicy.offsetStep, dy: 0) }
-            Button("↑") { model.nudgeOffset(dx: 0, dy: -AirMapPolicy.offsetStep) }
-            Button("↓") { model.nudgeOffset(dx: 0, dy: AirMapPolicy.offsetStep) }
-            Text(model.patchOffset.map { String(format: "%+.0f, %+.0f pt", $0.x, $0.y) } ?? "not chosen")
-                .font(.caption.monospaced())
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+                HStack(spacing: ScreenStyle.spacing) {
+                    offsetButton("arrow.left", label: "Move copy left", dx: -AirMapPolicy.offsetStep, dy: 0)
+                    offsetButton("arrow.right", label: "Move copy right", dx: AirMapPolicy.offsetStep, dy: 0)
+                    offsetButton("arrow.up", label: "Move copy up", dx: 0, dy: -AirMapPolicy.offsetStep)
+                    offsetButton("arrow.down", label: "Move copy down", dx: 0, dy: AirMapPolicy.offsetStep)
+                }
+                Text(model.patchOffset.map { String(format: "%+.0f, %+.0f pt", $0.x, $0.y) } ?? "Choose a direction to place the copy.")
+                    .font(.caption.monospaced()).foregroundStyle(ScreenStyle.secondary)
+            }
+            .padding(.bottom, ScreenStyle.spacing)
+        } label: {
+            Text("Adjust copy").font(.body.weight(.semibold))
+                .frame(minHeight: ScreenStyle.minimumControlHeight)
         }
-        .buttonStyle(.bordered)
+        .accessibilityIdentifier("copyAdjustment")
+    }
+
+    private func offsetButton(_ symbol: String, label: String, dx: Double, dy: Double) -> some View {
+        Button { model.nudgeOffset(dx: dx, dy: dy) } label: {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: ScreenStyle.minimumControlHeight)
+                .background(ScreenStyle.background, in: RoundedRectangle(cornerRadius: ScreenStyle.spacing))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func instruction(_ state: AirTraceState) -> String {
         switch state {
-        case .ready: "Press Start drawing to record your index finger. Ordinary finger movement does not draw."
-        case .armed: "Drawing armed — move your index finger in the camera view to begin the yellow line."
-        case .tracing: "Draw a closed outline with your index finger. Return to the yellow start dot, then tap Finish shape with your other hand while keeping the index visible."
-        case .candidateReady: "Shape frozen. Review the yellow trace and cyan ellipse, then Accept region or Draw again."
-        case .accepted: "Screen-fixed region accepted. Choose a copy offset, then switch to Rear scene."
-        case let .invalid(reason): "Stroke cleared — \(Self.describe(reason)). Choose Draw again."
+        case .ready: "Show your index finger to start drawing."
+        case .armed: "Move your index finger to begin the outline."
+        case .tracing: "Close the loop. Keep your finger visible while tapping Finish."
+        case .candidateReady: "Review the yellow outline and cyan ellipse."
+        case .accepted: "Region ready. Adjust the copy, then select Rear."
+        case let .invalid(reason): "Stroke cleared: \(Self.describe(reason)). Redraw to try again."
         }
     }
 

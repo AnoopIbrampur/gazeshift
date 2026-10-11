@@ -5,11 +5,13 @@ import GazeShiftFlow
 
 // Progress, controls and reports cannot resize or scroll the measured viewport.
 enum ScreenStyle {
-    static let background = Color(red: 0.035, green: 0.065, blue: 0.09)
-    static let surface = Color(red: 0.065, green: 0.11, blue: 0.14)
-    static let accent = Color(red: 0.49, green: 0.91, blue: 0.80)
-    static let secondary = Color(red: 0.65, green: 0.73, blue: 0.77)
-    static let spacing: CGFloat = 10
+    static let background = Color.white
+    static let surface = Color(red: 245.0 / 255, green: 245.0 / 255, blue: 247.0 / 255)
+    static let accent = Color(red: 0, green: 102.0 / 255, blue: 204.0 / 255)
+    static let ink = Color(red: 29.0 / 255, green: 29.0 / 255, blue: 31.0 / 255)
+    static let secondary = Color(red: 110.0 / 255, green: 110.0 / 255, blue: 115.0 / 255)
+    static let spacing: CGFloat = 8
+    static let minimumControlHeight: CGFloat = 44
     static let pagePadding: CGFloat = 16
     static let cursorDiameter: CGFloat = 18
     static let gazeDiameter: CGFloat = 22
@@ -428,6 +430,7 @@ struct ContentView: View {
     @State private var compositeFailure: String?
     @State private var viewportFrame: CGRect = .zero
     @State private var now = ProcessInfo.processInfo.systemUptime
+    @State private var showingInfo = false
     private let timer = Timer.publish(every: CaptureLimits.watchdogInterval, on: .main, in: .common).autoconnect()
     private var snapshot: CaptureSnapshot { capture.snapshot.forDisplay() }
     private var geometry: RenderGeometry? {
@@ -439,65 +442,47 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { page in
-            VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
-                HStack {
-                    Text("GAZESHIFT").font(.caption.weight(.semibold)).foregroundStyle(ScreenStyle.accent)
-                    Spacer()
-                    Button("Front setup") { start(.setupFront) }.accessibilityIdentifier("frontSetup")
-                    Button("Rear scene") { start(.liveRear) }.accessibilityIdentifier("rearScene")
-                }
-                .buttonStyle(.borderedProminent).tint(ScreenStyle.surface)
-                .padding(.horizontal, ScreenStyle.pagePadding)
+            VStack(spacing: 0) {
+                header
                 viewport
                     .frame(width: page.size.width, height: page.size.width / ScreenStyle.cameraAspectRatio)
-                    .overlay(alignment: .topLeading) {
-                        Text(snapshot.status.text).font(.subheadline.weight(.medium)).foregroundStyle(ScreenStyle.accent)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(height: ScreenStyle.captureStatusHeight)
-                            .padding(.horizontal, ScreenStyle.pagePadding)
-                            .background(.black.opacity(0.65))
-                            .accessibilityIdentifier("captureStatus")
+                    .overlay(alignment: .topLeading) { cameraStatus }
+                    .overlay(alignment: .bottomLeading) {
+                        if viewMode != .live {
+                            Text("Simulation · demo only")
+                                .font(.caption.weight(.semibold)).foregroundStyle(.white)
+                                .padding(.horizontal, 12).padding(.vertical, ScreenStyle.spacing)
+                                .background(.black.opacity(0.7), in: Capsule())
+                                .padding(ScreenStyle.pagePadding)
+                                .accessibilityIdentifier("simulationLabel")
+                        }
                     }
                 ScrollView {
                     VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
-                        AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
-                        Text("Eye tracking disabled · screen-fixed approximation.")
-                            .font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                            .accessibilityIdentifier("eyeTrackingDisabledBanner")
-                        HStack {
-                            Text("\(Int(viewportFrame.width)) × \(Int(viewportFrame.height)) pt · portrait")
-                            Spacer()
-                            Text(snapshot.mode == .setupFront ? "FRONT" : "REAR")
-                        }.font(.caption.monospaced()).foregroundStyle(ScreenStyle.secondary)
-                        if airTrace.reviewedRegion != nil {
+                        cameraSelection
+                        AirMapControls(model: airTrace, startBlocker: airMapBlocker,
+                                       cameraMode: snapshot.mode, onStart: startAirMap)
+                        if airTrace.reviewedRegion != nil, let composition {
                             Divider()
-                            if let composition { ComparisonControls(mode: $viewMode, plan: composition.plan) }
-                            Text("The hand-drawn ellipse stays at fixed screen coordinates. Eye movement does not move it.")
-                                .font(.caption).foregroundStyle(.orange)
-                            Text("The copy duplicates original pixels and covers destination content. Choose an offset that fits the view without overlapping the region.")
-                                .font(.caption).foregroundStyle(ScreenStyle.secondary)
+                            ComparisonControls(mode: $viewMode, plan: composition.plan)
                         }
                         if let compositeFailure {
-                            Text("Simulation unavailable — \(compositeFailure)").font(.caption).foregroundStyle(.orange)
+                            Text("Effect unavailable — \(compositeFailure)")
+                                .font(.subheadline).foregroundStyle(.red)
+                                .accessibilityIdentifier("compositeFailure")
                         }
-                        Divider()
-                        Text(snapshot.handMessage).font(.caption).foregroundStyle(ScreenStyle.secondary)
-                        Text(snapshot.support?.text ?? "Camera support is checked when capture starts")
-                            .font(.caption2).foregroundStyle(ScreenStyle.secondary)
-                        HStack {
-                            Button("Retry") { airTrace.interrupt(); capture.retry() }.accessibilityIdentifier("retryCapture")
-                            Button("Stop") { stop() }.accessibilityIdentifier("stopCapture")
-                            Spacer()
-                            Text("AIR-TRACE / \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")")
-                                .font(.caption2.monospaced()).foregroundStyle(ScreenStyle.secondary)
-                        }.buttonStyle(.bordered)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, ScreenStyle.pagePadding)
+                    .padding(ScreenStyle.pagePadding)
                 }
-            }.padding(.vertical, ScreenStyle.spacing)
+                .background(ScreenStyle.surface)
+            }
         }
         .background(ScreenStyle.background.ignoresSafeArea())
+        .foregroundStyle(ScreenStyle.ink)
+        .tint(ScreenStyle.accent)
+        .preferredColorScheme(.light)
+        .fullScreenCover(isPresented: $showingInfo) { infoScreen }
         .onAppear { airTrace.attach(events: capture.events) }
         .onChange(of: airTrace.reviewedRegion != nil) { _, accepted in
             if accepted { viewMode = .comparison(.simulatedBlur) }
@@ -509,14 +494,116 @@ struct ContentView: View {
         }
     }
 
+    private var header: some View {
+        HStack {
+            Text("GazeShift").font(.title3.weight(.semibold))
+            Spacer()
+            Button { showingInfo = true } label: {
+                Image(systemName: "info.circle")
+                    .font(.title3)
+                    .frame(width: ScreenStyle.minimumControlHeight, height: ScreenStyle.minimumControlHeight)
+            }
+            .accessibilityLabel("About GazeShift and camera controls")
+            .accessibilityIdentifier("showInfo")
+        }
+        .padding(.leading, ScreenStyle.pagePadding)
+        .padding(.trailing, ScreenStyle.spacing)
+        .frame(height: ScreenStyle.minimumControlHeight)
+        .background(ScreenStyle.background)
+    }
+
+    private var cameraStatus: some View {
+        Text(snapshot.status == .ready && snapshot.renderPacket != nil
+             ? (snapshot.mode == .setupFront ? "Front · Live" : "Rear · Live")
+             : (snapshot.status == .simulator ? "Camera unavailable in Simulator" : snapshot.status.text))
+            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, ScreenStyle.pagePadding).padding(.vertical, ScreenStyle.spacing)
+            .background(.black.opacity(0.65))
+            .accessibilityIdentifier("captureStatus")
+    }
+
+    private var cameraSelection: some View {
+        HStack(spacing: ScreenStyle.spacing) {
+            cameraButton("Front", mode: .setupFront, identifier: "frontSetup")
+            cameraButton("Rear", mode: .liveRear, identifier: "rearScene")
+        }
+    }
+
+    private func cameraButton(_ title: String, mode: CaptureMode, identifier: String) -> some View {
+        Button { start(mode) } label: {
+            Text(title).font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: ScreenStyle.minimumControlHeight)
+                .foregroundStyle(snapshot.mode == mode ? .white : ScreenStyle.accent)
+                .background(snapshot.mode == mode ? ScreenStyle.accent : ScreenStyle.background, in: Capsule())
+                .overlay(Capsule().stroke(ScreenStyle.accent, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start \(title.lowercased()) camera")
+        .accessibilityAddTraits(snapshot.mode == mode ? .isSelected : [])
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var infoScreen: some View {
+        NavigationStack {
+            List {
+                Section("How to use") {
+                    Text("Front → Start drawing. Trace a loop; keep your index visible while your other hand taps Finish shape.")
+                    Text("Review → Accept region → Adjust copy → Rear.")
+                    Text("Simulation: Original, Blur or Blur + Copy. Off shows the copy without blur.")
+                }
+                Section("About this demo") {
+                    Text("Screen-fixed approximation · no eye tracking")
+                        .fontWeight(.semibold)
+                        .accessibilityIdentifier("eyeTrackingDisabledBanner")
+                    Text("The region stays on screen. It cannot track a retinal blind spot or measure damage.")
+                    Text("Blur is an illustration. Copy duplicates pixels and covers destination content. Patient benefit is unproven.")
+                }
+                Section("Camera & diagnostics") {
+                    LabeledContent("Camera", value: snapshot.mode == .setupFront ? "Front" : "Rear")
+                    Text(snapshot.status.text)
+                    Text(snapshot.handMessage)
+                    if let hand = snapshot.hand {
+                        LabeledContent("Index confidence", value: hand.indexConfidence.formatted(.number.precision(.fractionLength(2))))
+                    }
+                    Text(snapshot.support?.text ?? "Support is checked when the camera starts.")
+                    LabeledContent("Viewport", value: "\(Int(viewportFrame.width)) × \(Int(viewportFrame.height)) pt")
+                    LabeledContent("Display", value: "\(displayScale.formatted())× · portrait")
+                    LabeledContent("Build", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")
+                }
+                .font(.subheadline)
+                .accessibilityIdentifier("sensorDiagnostics")
+                Section {
+                    Button("Retry camera") { airTrace.interrupt(); capture.retry() }
+                        .frame(minHeight: ScreenStyle.minimumControlHeight)
+                        .accessibilityIdentifier("retryCapture")
+                    Button("Stop camera") { stop() }
+                        .frame(minHeight: ScreenStyle.minimumControlHeight)
+                        .accessibilityIdentifier("stopCapture")
+                }
+            }
+            .navigationTitle("About GazeShift")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showingInfo = false }
+                        .frame(minHeight: ScreenStyle.minimumControlHeight)
+                        .accessibilityIdentifier("dismissInfo")
+                }
+            }
+        }
+        .tint(ScreenStyle.accent)
+        .preferredColorScheme(.light)
+    }
+
     private var viewport: some View {
         GeometryReader { measured in
             ZStack {
-                ScreenStyle.surface
+                Color.black
                 CameraView(packet: snapshot.renderPacket, onFailure: capture.rendererFailed,
                            composite: compositeUniforms, onCompositeFailure: { compositeFailure = $0 })
                 if snapshot.renderPacket == nil {
-                    Text(snapshot.status.text).font(.subheadline).padding().foregroundStyle(ScreenStyle.secondary)
+                    Image(systemName: "camera").font(.system(size: 40, weight: .regular)).foregroundStyle(.white.opacity(0.55))
                 }
                 if snapshot.mode == .setupFront, let hand = snapshot.hand {
                     Circle().fill(.yellow).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
@@ -526,7 +613,6 @@ struct ContentView: View {
                 if let composition, compositeFailure == nil { compositionOutline(composition.plan) }
             }
             .allowsHitTesting(false).clipped()
-            .overlay(Rectangle().stroke(ScreenStyle.secondary.opacity(0.3), lineWidth: 1))
             .onAppear { updateLayout(measured.frame(in: .global)) }
             .onChange(of: measured.frame(in: .global)) { _, frame in updateLayout(frame) }
             .onChange(of: displayScale) { _, _ in updateLayout(measured.frame(in: .global)) }
@@ -568,16 +654,16 @@ struct ContentView: View {
     }
 
     private var airMapBlocker: String? {
-        guard snapshot.mode == .setupFront else { return "Trace with Front setup, then switch to Rear scene" }
-        guard snapshot.status == .ready, snapshot.renderPacket != nil else { return "Waiting for a live front camera" }
-        guard geometry != nil else { return "Waiting for the measured display" }
+        guard snapshot.mode == .setupFront else { return "Select Front to draw a region." }
+        guard snapshot.status == .ready, snapshot.renderPacket != nil else { return "Start Front to draw a region." }
+        guard geometry != nil else { return "Preparing the camera view…" }
         guard let hand = snapshot.hand, hand.identity.generation == snapshot.generation,
               hand.identity.isFresh(at: ProcessInfo.processInfo.systemUptime),
               hand.indexConfidence.isFinite,
               (CaptureLimits.minimumHandJointConfidence...1).contains(hand.indexConfidence),
               hand.indexTip.x.isFinite, hand.indexTip.y.isFinite,
               (0...1).contains(hand.indexTip.x), (0...1).contains(hand.indexTip.y) else {
-            return "Show your index finger in the camera, then tap Start drawing"
+            return "Show your index finger to start drawing."
         }
         return nil
     }

@@ -18,24 +18,36 @@ struct ComparisonControls: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle("Demo comparison", isOn: demoOn).accessibilityIdentifier("demoComparisonToggle")
+        VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+            Toggle("Simulation", isOn: demoOn)
+                .font(.body.weight(.semibold))
+                .frame(minHeight: ScreenStyle.minimumControlHeight)
+                .accessibilityIdentifier("demoComparisonToggle")
             if mode != .live {
-                Picker("View", selection: comparison) {
-                    ForEach(ComparisonMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                HStack(spacing: 0) {
+                    comparisonButton("Original", selection: .original)
+                    comparisonButton("Blur", selection: .simulatedBlur)
+                    comparisonButton("Blur + Copy", selection: .simulatedBlurPlusCopy)
                 }
-                .pickerStyle(.segmented)
+                .background(ScreenStyle.background, in: Capsule())
+                .overlay(Capsule().stroke(ScreenStyle.accent, lineWidth: 1))
                 .accessibilityIdentifier("comparisonPicker")
             }
-            Text(plan.statusText).font(.subheadline.weight(.medium)).accessibilityIdentifier("compositionStatus")
-            if let label = plan.simulationLabel {
-                Text(label).font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                    .accessibilityIdentifier("simulationLabel")
-            }
-            if mode == .comparison(.simulatedBlur) || mode == .comparison(.simulatedBlurPlusCopy) {
-                Text(CompositionPlan.simulationContextText).font(.caption2).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("simulationContext")
+            if plan.isOriginalOnly, mode != .comparison(.original) {
+                Text(plan.statusText).font(.subheadline).foregroundStyle(.red)
+                    .accessibilityIdentifier("compositionStatus")
             }
         }
+    }
+
+    private func comparisonButton(_ title: String, selection: ComparisonMode) -> some View {
+        Button { comparison.wrappedValue = selection } label: {
+            Text(title).font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: ScreenStyle.minimumControlHeight)
+                .foregroundStyle(comparison.wrappedValue == selection ? .white : ScreenStyle.accent)
+                .background(comparison.wrappedValue == selection ? ScreenStyle.accent : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(comparison.wrappedValue == selection ? .isSelected : [])
     }
 }
