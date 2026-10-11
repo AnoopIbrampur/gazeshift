@@ -61,6 +61,13 @@ struct HandObservation {
     let thumbConfidence: Float
 }
 
+/// Ordered sensing events, separate from display snapshots and their freshness filtering.
+enum CaptureEvent {
+    case eyes(EyeObservation?, identity: FrameIdentity, mode: CaptureMode)
+    case hand(Result<HandObservation?, Error>, identity: FrameIdentity, mode: CaptureMode)
+    case reset(generation: UInt64, mode: CaptureMode)
+}
+
 struct RenderPacket {
     let identity: FrameIdentity
     let image: CVPixelBuffer
