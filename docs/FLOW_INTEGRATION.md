@@ -1,33 +1,40 @@
-# Flow integration (ANO-8, ANO-10, ANO-11, ANO-15, ANO-20)
+# Flow integration (ANO-8, ANO-10, ANO-11, ANO-20)
 
 Branch `anoop/flow-and-ui`. Written on a Mac without Xcode, so **nothing here has been built for iOS or run on a device**.
 
+## Status
+
+- **Air map (ANO-20, ANO-8) is wired into the app.** `GazeShiftFlow` and `GazeShift/Flow/*.swift` are in the Xcode project. `ContentView` has an **AIR MAP** section and a viewport overlay. It needs an iOS build and a phone test.
+- **Comparison and copy (ANO-10, ANO-11) are logic only.** The planner, the controls and `CompositeShaders.metal` exist, but the renderer isn't switched over yet. `CompositeShaders.metal` is in the project navigator but **in no build phase**.
+- **Calibration:** Hussain's merged `GazeSession` / `GazeCalibrationControls` handle it. The earlier duplicate `CalibrationRun` / `CalibrationScreen` from this branch has been removed.
+
 ## What was verified
 
-- `GazeShiftFlow` (new local package, depends on `../GazeShiftCore` by path): 24 Swift Testing tests pass with `swift test` using the Command Line Tools. They use **synthetic fixtures only**, so they prove flow logic and not device calibration, air tracing or live-eye behavior.
-- Two deliberately injected bugs (blur in normal Live; accepting a target with too few eye samples) were caught by the tests, then reverted.
-- `GazeShift/Flow/*.swift` type-check against the macOS SDK together with `CaptureTypes.swift` and `DisplayGeometry.swift`. They have not been compiled against the iOS SDK.
-- `CompositeShaders.metal` has **not been compiled at all**.
+- `GazeShiftFlow`: **18 Swift Testing tests pass** with `swift test` using the Command Line Tools. They use **synthetic fixtures only** and prove flow logic, not real air tracing or live eyes.
+- Earlier, two deliberately injected bugs were caught by the tests, then reverted.
+- `ContentView`, `GazeSession`, `GazeCalibrationControls` and `GazeShift/Flow/*.swift` type-check against the **macOS** SDK. That run used stand-ins for the iOS-only `CameraView` / `CaptureModel` and swapped `.topBarTrailing` → `.automatic`, in scratch copies only. They have not been compiled against the iOS SDK.
+- `project.pbxproj` passes `plutil -lint`. The new IDs (`F000…01`–`0B`) each have one definition and the expected uses.
+- `CompositeShaders.metal` has **not been compiled.**
+- One change to the core: `Calibration.swift` gets explicit `[Double]` types, because the Swift 6.2 CLI couldn't type-check that expression. Values and order are unchanged.
 
-One change to Hussain's core: `GazeShiftCore/Sources/GazeShiftCore/Calibration.swift` gets explicit `[Double]` types on the design/target concatenation. Swift 6.2 (Command Line Tools) failed with "unable to type-check this expression in reasonable time". The values and order are unchanged.
+## How the air map runs
 
-## What's in it
+1. Front setup → Hussain's calibration → held-out test → eye-only check. **AIR MAP → Start** is enabled only when `gaze.report?.passesCompleteGate == true` (ANO-19).
+2. `AirTraceModel` subscribes to `capture.$snapshot`, so view updates can't coalesce snapshots away. For each new frame it records `rawEyes` / `rawEyeIdentity` through `gaze.calibration`. For each new `snapshot.hand` it pairs the hand with the gaze **from the same frame** (generation + ARKit frame timestamp) and feeds the core `AirTraceSession`.
+3. A white `+` at the viewport center is the stationary fixation reference. You pinch, trace, return to the start and release.
+   - **Clears the whole stroke:** a stale or missing hand (no new hand result for 250 ms, because the snapshot carries only detected hands), missing same-frame gaze, a blink, drift beyond 0.10 of the diagonal, a generation change, a mode change, Stop/Retry or a geometry change.
+4. Review shows the raw trace (yellow) and the min/max ellipse (cyan), with explicit Accept/Redo and copy-offset nudges (green preview box). There's no default offset.
 
-| Ticket | Piece | Where |
-|---|---|---|
-| ANO-20 | `AirTracePairer`/`AirTraceFlow`: pairs each Vision hand result with the calibrated gaze **from the same ARFrame** (generation + ARKit frame timestamp) and feeds the reviewed `AirTraceSession`. A missing hand, missing same-frame gaze, blink or drift clears the whole stroke. | `GazeShiftFlow/Sources/GazeShiftFlow/AirTraceFlow.swift` |
-| ANO-15 | `CalibrationRun`: 9 training targets (.15/.5/.85; 0.5 s settle + 1 s capture; ≥10 unique valid samples per target or explicit failure), `GazeCalibration.fit`, then the held-out protocol: 2 passes × (4 novel + 1 interleaved center), 20 scheduled 50 ms slots each through `HeldOutWindow`. Dropped ticks count as missing, never extended. Then an operator eye-only check → `HeldOutReport`. | `GazeShiftFlow/.../CalibrationRun.swift`, `GazeShift/Flow/CalibrationScreen.swift` |
-| ANO-8 | Review screen: raw trace, min/max ellipse, fixation `+`, Accept (only when `candidateReady`) / Redo, explicit copy-offset nudges (no default offset). | `GazeShift/Flow/AirMapReviewScreen.swift` |
-| ANO-10/11 | `CompositionPlanner`: Live = copy only; Original = nothing; Simulated blur = mask at gaze + region offset; Blur + copy = same ellipse for mask and copy. Lost gaze or rejected placement → original + status. The Metal compositor samples original pixels for the copy and applies the blur last. | `GazeShiftFlow/.../Composition.swift`, `GazeShift/Flow/ComparisonControls.swift`, `GazeShift/Flow/CompositeShaders.metal` |
+## Open issue for Hussain: region carry-over to rear mode
 
-## Integration steps (Hussain / integrator, in Xcode)
+`GazeSession.configure` sets `viewingSetupID = "capture-generation-<n>-origin-<x>-<y>"`. Switching to Rear + eyes advances the generation, so the setup ID changes. Core `ReviewedRegion.retainedForModeTransition(to:)` requires the same `viewingSetupID`, so an accepted front region will be rejected with `invalidModeTransition` in rear mode. **Proposed fix:** keep the generation out of `viewingSetupID` and invalidate the calibration on a generation change separately. This is Hussain's file, so it hasn't been changed here. ANO-10/11 live relocation needs this.
 
-1. **Packages:** File → Add Package Dependencies → Add Local… → `GazeShiftFlow`. Link the `GazeShiftFlow` and `GazeShiftCore` libraries to the `GazeShift` target.
-2. **Sources:** add `GazeShift/Flow/*.swift` to the `GazeShift` target.
-3. **Shader:** add `GazeShift/Flow/CompositeShaders.metal` to Copy Bundle Resources **as text**, the same way as `CameraShaders.metal`, not as a compiled source. Load it with a second `device.makeLibrary(source:)` and build a separate pipeline with `compositeVertex` and `compositeFragment`. Keep the existing pipeline as a fallback until it's verified on the phone.
-4. **Renderer inputs:** compute the plan each frame:
+## Remaining wiring for ANO-10/11 (after the carry-over fix)
+
+1. Add `CompositeShaders.metal` to Copy Bundle Resources **as text**. Load it with a second `device.makeLibrary(source:)` and build a pipeline with `compositeVertex` / `compositeFragment`. Keep the existing pipeline as a fallback until it's verified on the phone.
+2. Per frame:
    ```swift
-   let plan = CompositionPlanner.plan(mode: viewMode, region: rearRegion, gaze: liveGaze, geometry: rearGeometry,
+   let plan = CompositionPlanner.plan(mode: viewMode, region: rearRegion, gaze: gaze.marker(at: now), geometry: rearGeometry,
                                       userOffset: airTrace.patchOffset ?? .init(x: .nan, y: .nan),
                                       liveMargin: LivePlacementMargin(p90ErrorPoints: rearReport.overallErrors?.p90Points ?? .nan,
                                                                      geometry: rearGeometry, validated: rearReport.passesCompleteGate),
@@ -35,13 +42,10 @@ One change to Hussain's core: `GazeShiftCore/Sources/GazeShiftCore/Calibration.s
    var gpu = CompositeUniformValues(plan: plan, geometry: rearGeometry).gpu
    encoder.setFragmentBytes(&gpu, length: MemoryLayout<CompositeUniformValues.GPU>.stride, index: 1)
    ```
-   `liveGaze` must be `nil` unless `CaptureFreshness` reports tracking available, so it follows the three-fresh-sample recovery rule. A NaN offset is deliberately rejected as `invalidOffset`, so the original is shown until the user picks an offset. `cameraSamplingBounds` is the full viewport only while the ARKit display transform is aspect-fill. Otherwise, map the camera image extent into view points.
-5. **Air-trace feed** (capture queue → main actor, preserving order so a frame's gaze is recorded before its hand):
-   - For each front frame, after eyes are read: `airTrace.ingestEyes(eyes, identity: frameIdentity, calibration: frontCalibration)`
-   - In `handFinished(item, result)`: `airTrace.ingestHand(observationOrNil, identity: item.identity, geometry: frontGeometry)`. Call it **also when no hand was found**, because that's what clears an in-progress stroke.
-   - Call `airTrace.interrupt()` on mode switch, pause, layout change or a new generation.
-6. **Calibration feed:** `calibrationController.latestObservation = { FlowAdapters.gazeObservation(snapshot.eyes, identity: snapshot.eyeIdentity!) }` (guard against nil identity), and `currentGeometry = { FlowAdapters.renderGeometry(...) }`. Run it once in Front setup (ANO-19) and again after switching to Rear + eyes (ANO-21). `ReviewedRegion.retainedForModeTransition(to:)` carries the region across.
-7. Change `viewingSetupID` whenever the phone stand, distance or lighting changes. That invalidates calibrations and regions through geometry equality.
+   - `gaze.marker(at:)` is already nil unless gaze is valid, recovered (3 samples) and on-screen.
+   - A NaN offset is rejected as `invalidOffset`, so the original is shown until the user chooses an offset.
+   - Full-viewport sampling bounds are valid only while the ARKit transform is aspect-fill.
+3. Add `ComparisonControls(mode:plan:)` below the viewport in rear mode.
 
 ## Run the flow tests (no Xcode needed)
 
@@ -50,4 +54,4 @@ cd GazeShiftFlow
 F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks
 swift test -Xswiftc -F -Xswiftc $F -Xlinker -rpath -Xlinker $F
 ```
-With Xcode installed, a plain `swift test` (or ⌘U on the package) works.
+With Xcode installed, a plain `swift test` works.

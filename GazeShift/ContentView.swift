@@ -24,6 +24,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var capture = CaptureModel()
     @State private var gaze = GazeSession()
+    @StateObject private var airTrace = AirTraceModel()
     @State private var viewportFrame: CGRect = .zero
     @State private var showReferences = true
     @State private var now = ProcessInfo.processInfo.systemUptime
@@ -61,9 +62,11 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
                         GazeCalibrationControls(session: $gaze, showReferences: $showReferences, captureReady: snapshot.status == .ready)
                         Divider()
+                        AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
+                        Divider()
                         diagnostics
                         HStack {
-                            Button("Retry") { gaze.invalidate("Not calibrated — capture restarted"); capture.retry() }
+                            Button("Retry") { gaze.invalidate("Not calibrated — capture restarted"); airTrace.interrupt(); capture.retry() }
                                 .accessibilityIdentifier("retryCapture")
                             Button("Stop") { stop() }.accessibilityIdentifier("stopCapture")
                             Spacer()
@@ -75,11 +78,13 @@ struct ContentView: View {
             .padding(ScreenStyle.pagePadding)
         }
         .background(ScreenStyle.background.ignoresSafeArea())
+        .onAppear { airTrace.attach(snapshots: capture.$snapshot) }
         .onChange(of: snapshot.sequence) { _, _ in acceptCapture() }
         .onChange(of: scenePhase) { _, phase in if phase == .background { stop() } }
         .onReceive(timer) { _ in
             now = ProcessInfo.processInfo.systemUptime
             gaze.tick(now: now)
+            airTrace.tick(now: now, geometry: gaze.geometry)
         }
     }
 
@@ -121,6 +126,7 @@ struct ContentView: View {
                     Circle().stroke(.yellow, lineWidth: 2).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
                         .position(x: hand.thumbTip.x * geometry.size.width, y: hand.thumbTip.y * geometry.size.height)
                 }
+                AirMapOverlay(model: airTrace)
                 if showReferences, gaze.calibration != nil, !gaze.isRunning {
                     ForEach(HeldOutTarget.allCases, id: \.rawValue) { reference in
                         RoundedRectangle(cornerRadius: 3).stroke(.white, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
@@ -191,11 +197,26 @@ struct ContentView: View {
     }
     private func start(_ mode: CaptureMode) {
         gaze.invalidate("Not calibrated — camera mode selected")
+        airTrace.interrupt()
         capture.start(mode)
     }
     private func stop() {
         gaze.invalidate("Paused — recalibrate after restarting")
+        airTrace.interrupt()
         capture.stop()
+    }
+    /// Air mapping needs live Front capture and a front calibration that passed held-out + eye-only (ANO-19).
+    private var airMapBlocker: String? {
+        guard snapshot.mode == .setupFront else { return "Air map runs in Front setup" }
+        guard snapshot.status == .ready else { return "Waiting for live front camera and eyes" }
+        guard !gaze.isRunning else { return "Finish the calibration step first" }
+        guard gaze.calibration != nil, gaze.geometry != nil else { return "Calibrate first" }
+        guard gaze.report?.passesCompleteGate == true else { return "Needs a passed held-out test and eye-only check" }
+        return nil
+    }
+    private func startAirMap() {
+        guard airMapBlocker == nil, let geometry = gaze.geometry, let calibration = gaze.calibration else { return }
+        airTrace.begin(geometry: geometry, calibration: calibration, generation: snapshot.generation)
     }
     private func vector(_ value: SIMD3<Float>) -> String { String(format: "%.3f, %.3f, %.3f", value.x, value.y, value.z) }
     private func blink(_ value: Float?) -> String { value.map { String(format: "%.2f", $0) } ?? "unavailable" }

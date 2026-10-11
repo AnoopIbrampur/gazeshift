@@ -1,123 +1,203 @@
+import Combine
 import SwiftUI
 import GazeShiftCore
 import GazeShiftFlow
 
+enum AirMapPolicy {
+    /// Stationary fixation reference for the demo: the viewport center.
+    static let normalizedFixation = ScreenPoint(x: 0.5, y: 0.5)
+    static let eyeStateDescription = "Healthy-user demo · both eyes open · binocular viewing"
+    static let offsetStep = 20.0
+}
+
 /// Owns one air-trace attempt plus the reviewed region and explicit patch offset.
+/// Fed from every published capture snapshot, using `GazeSession`'s geometry and calibration.
 @MainActor
 final class AirTraceModel: ObservableObject {
     @Published private(set) var flow: AirTraceFlow?
     @Published private(set) var reviewedRegion: ReviewedRegion?
     /// Explicit user-chosen copy translation in view points. Nil until chosen; no default placement.
     @Published var patchOffset: ScreenPoint?
-    static let offsetStep = 20.0
+    private var calibration: GazeCalibration?
+    private var lastEyeSource = -Double.infinity
+    private var lastHandSource = -Double.infinity
+    private var subscription: AnyCancellable?
 
-    /// Start in Front setup with a passed front-mode calibration and the stationary reference point.
-    func begin(geometry: RenderGeometry, fixation: ScreenPoint, eyeStateDescription: String, generation: UInt64) {
+    /// Subscribe once to `CaptureModel.$snapshot` so no snapshot is skipped by view coalescing.
+    func attach<P: Publisher>(snapshots: P) where P.Output == CaptureSnapshot, P.Failure == Never {
+        guard subscription == nil else { return }
+        subscription = snapshots.sink { [weak self] snapshot in
+            MainActor.assumeIsolated { self?.receive(snapshot) }
+        }
+    }
+
+    /// Start in Front setup with the front-mode calibration that passed its held-out report.
+    func begin(geometry: RenderGeometry, calibration: GazeCalibration, generation: UInt64) {
+        let fixation = ScreenPoint(x: AirMapPolicy.normalizedFixation.x * geometry.width,
+                                   y: AirMapPolicy.normalizedFixation.y * geometry.height)
         reviewedRegion = nil
+        lastEyeSource = -.infinity
+        lastHandSource = -.infinity
+        self.calibration = calibration
         flow = (try? AirTraceSession(geometry: geometry, fixation: fixation,
-                                     eyeStateDescription: eyeStateDescription, captureGeneration: generation))
+                                     eyeStateDescription: AirMapPolicy.eyeStateDescription,
+                                     captureGeneration: generation))
             .map(AirTraceFlow.init(session:))
     }
 
-    /// Call for every front ARFrame, with that frame's eyes (nil when no face).
-    func ingestEyes(_ eyes: EyeObservation?, identity: FrameIdentity, calibration: GazeCalibration?) {
-        flow?.recordGaze(frame: FlowAdapters.frameKey(identity),
-                         observation: FlowAdapters.gazeObservation(eyes, identity: identity),
-                         calibration: calibration, now: ProcessInfo.processInfo.systemUptime)
+    /// Leaves air mapping. An accepted region is kept for the rear-mode steps.
+    func end() {
+        flow = nil
+        calibration = nil
     }
 
-    /// Call when Vision finishes `identity`'s frame, including when it found no confident hand.
-    func ingestHand(_ hand: HandObservation?, identity: FrameIdentity, geometry: RenderGeometry) {
-        flow?.handResult(hand.map(FlowAdapters.handInput), frame: FlowAdapters.frameKey(identity),
-                         now: ProcessInfo.processInfo.systemUptime, geometry: geometry)
+    func tick(now: Double, geometry: RenderGeometry?) {
+        guard var current = flow else { return }
+        let before = current.state
+        // Layout, generation or calibration-setup change: an unaccepted stroke must be redone.
+        if geometry != current.geometry, before != .accepted { current.interrupt() }
+        current.expireStaleHand(now: now)
+        if current.state != before { flow = current }
     }
 
-    func accept() { reviewedRegion = try? flow?.accept() }
-    func redo() { reviewedRegion = nil; flow?.redo() }
-    func interrupt() { flow?.interrupt() }
+    func accept() {
+        guard var current = flow else { return }
+        reviewedRegion = try? current.accept()
+        flow = current
+    }
+
+    func redo() {
+        guard var current = flow else { return }
+        reviewedRegion = nil
+        current.redo()
+        flow = current
+    }
+
+    /// Mode switch, Stop or Retry. Does nothing once the region is accepted.
+    func interrupt() {
+        guard var current = flow, current.state != .accepted else { return }
+        current.interrupt()
+        flow = current
+    }
 
     func nudgeOffset(dx: Double, dy: Double) {
         let current = patchOffset ?? ScreenPoint(x: 0, y: 0)
         patchOffset = ScreenPoint(x: current.x + dx, y: current.y + dy)
     }
+
+    private func receive(_ snapshot: CaptureSnapshot) {
+        guard var current = flow, current.state == .ready || current.state == .tracing else { return }
+        guard snapshot.mode == .setupFront, snapshot.generation == current.session.captureGeneration else {
+            current.interrupt()
+            flow = current
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        // Raw eyes (including invalid/blinking ones) so rejections stay truthful; one record per frame.
+        if let identity = snapshot.rawEyeIdentity, identity.captureTimestamp > lastEyeSource {
+            lastEyeSource = identity.captureTimestamp
+            current.recordGaze(frame: FlowAdapters.frameKey(identity),
+                               observation: FlowAdapters.gazeObservation(snapshot.rawEyes, identity: identity),
+                               calibration: calibration, now: now)
+        }
+        if let hand = snapshot.hand, hand.identity.captureTimestamp > lastHandSource {
+            lastHandSource = hand.identity.captureTimestamp
+            current.handResult(FlowAdapters.handInput(hand), frame: FlowAdapters.frameKey(hand.identity),
+                               now: now, geometry: current.geometry)
+        }
+        flow = current
+    }
 }
 
-/// ANO-8: raw air trace + min/max bounding ellipse, explicit Accept/Redo, explicit offset controls.
-/// Touch never draws the region; it only reviews and sets the copy offset.
-struct AirMapReviewScreen: View {
+/// Drawn inside the measured viewport (same coordinate space as `GazeSession` geometry).
+struct AirMapOverlay: View {
     @ObservedObject var model: AirTraceModel
 
     var body: some View {
-        VStack(spacing: 10) {
-            GeometryReader { _ in
-                ZStack {
-                    if let flow = model.flow { overlay(flow) }
+        if let flow = model.flow {
+            let fixation = FlowAdapters.cgPoint(flow.session.fixation)
+            ZStack {
+                Path { path in
+                    guard let first = flow.rawTrace.first else { return }
+                    path.move(to: FlowAdapters.cgPoint(first))
+                    for point in flow.rawTrace.dropFirst() { path.addLine(to: FlowAdapters.cgPoint(point)) }
                 }
+                .stroke(Color.yellow, lineWidth: 1.5)
+                if let ellipse = flow.candidateEllipse {
+                    let box = CGRect(x: ellipse.center.x - ellipse.radii.x, y: ellipse.center.y - ellipse.radii.y,
+                                     width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y)
+                    Path(ellipseIn: box).stroke(Color.cyan, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                    if let offset = model.patchOffset {
+                        Path(box.offsetBy(dx: offset.x, dy: offset.y))
+                            .stroke(Color.green, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                    }
+                }
+                Path { path in
+                    path.move(to: CGPoint(x: fixation.x - 12, y: fixation.y)); path.addLine(to: CGPoint(x: fixation.x + 12, y: fixation.y))
+                    path.move(to: CGPoint(x: fixation.x, y: fixation.y - 12)); path.addLine(to: CGPoint(x: fixation.x, y: fixation.y + 12))
+                }
+                .stroke(Color.white, lineWidth: 2.5)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityIdentifier("airMapOverlay")
-            controls
         }
     }
+}
 
-    private func overlay(_ flow: AirTraceFlow) -> some View {
-        let fixation = FlowAdapters.cgPoint(flow.session.fixation)
-        return ZStack {
-            Path { path in
-                guard let first = flow.rawTrace.first else { return }
-                path.move(to: FlowAdapters.cgPoint(first))
-                for point in flow.rawTrace.dropFirst() { path.addLine(to: FlowAdapters.cgPoint(point)) }
-            }
-            .stroke(Color.yellow, lineWidth: 1.5)
-            if let ellipse = flow.candidateEllipse {
-                Path(ellipseIn: CGRect(x: ellipse.center.x - ellipse.radii.x, y: ellipse.center.y - ellipse.radii.y,
-                                       width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y))
-                    .stroke(Color.cyan, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                if let offset = model.patchOffset {
-                    Path(CGRect(x: ellipse.center.x - ellipse.radii.x + offset.x, y: ellipse.center.y - ellipse.radii.y + offset.y,
-                                width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y))
-                        .stroke(Color.green, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
-                }
-            }
-            Path { path in
-                path.move(to: CGPoint(x: fixation.x - 10, y: fixation.y)); path.addLine(to: CGPoint(x: fixation.x + 10, y: fixation.y))
-                path.move(to: CGPoint(x: fixation.x, y: fixation.y - 10)); path.addLine(to: CGPoint(x: fixation.x, y: fixation.y + 10))
-            }
-            .stroke(Color.white, lineWidth: 2)
-        }
-    }
+/// ANO-8 controls: explicit Accept/Redo and copy-offset nudges. Touch never draws the region.
+struct AirMapControls: View {
+    @ObservedObject var model: AirTraceModel
+    /// Why air mapping cannot start yet; nil when it can.
+    let startBlocker: String?
+    let onStart: () -> Void
 
-    private var controls: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(instruction).font(.subheadline)
-            Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Button("Redo") { model.redo() }.buttonStyle(.bordered)
-                Button("Accept region") { model.accept() }
+            Text("AIR MAP").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if let flow = model.flow {
+                Text(instruction(flow.state)).font(.subheadline)
+                Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Redo") { model.redo() }.buttonStyle(.bordered).accessibilityIdentifier("airMapRedo")
+                    Button("Accept region") { model.accept() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(flow.state != .candidateReady)
+                        .accessibilityIdentifier("airMapAccept")
+                    Spacer()
+                    Button("Close") { model.end() }.buttonStyle(.bordered)
+                }
+                if flow.candidate != nil || flow.state == .accepted { offsetControls }
+            } else {
+                Button("Start air map", action: onStart)
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.flow?.state != .candidateReady)
+                    .disabled(startBlocker != nil)
+                    .accessibilityIdentifier("airMapStart")
+                if let startBlocker { Text(startBlocker).font(.caption).foregroundStyle(.secondary) }
+                if model.reviewedRegion != nil { Text("Region accepted and kept for live mode.").font(.caption) }
             }
-            HStack(spacing: 6) {
-                Text("Copy offset").font(.caption)
-                Button("←") { model.nudgeOffset(dx: -AirTraceModel.offsetStep, dy: 0) }
-                Button("→") { model.nudgeOffset(dx: AirTraceModel.offsetStep, dy: 0) }
-                Button("↑") { model.nudgeOffset(dx: 0, dy: -AirTraceModel.offsetStep) }
-                Button("↓") { model.nudgeOffset(dx: 0, dy: AirTraceModel.offsetStep) }
-                Text(model.patchOffset.map { String(format: "%+.0f, %+.0f pt", $0.x, $0.y) } ?? "not chosen")
-                    .font(.caption.monospaced())
-            }
-            .buttonStyle(.bordered)
         }
-        .padding(.horizontal)
     }
 
-    private var instruction: String {
-        guard let flow = model.flow else { return "Calibrate front mode first, then start air mapping." }
-        switch flow.state {
-        case .ready: return "Keep looking at the +. Pinch thumb and index, trace one closed outline in the air, return to the start and release."
-        case .tracing: return "Tracing — keep your eyes on the +."
-        case .candidateReady: return "Review the raw trace (yellow) and bounding ellipse (cyan). Accept or Redo."
-        case .accepted: return "Region accepted. Choose the copy offset, then continue to rear calibration."
-        case let .invalid(reason): return "Stroke cleared — \(Self.describe(reason)). Redo."
+    private var offsetControls: some View {
+        HStack(spacing: 6) {
+            Text("Copy offset").font(.caption)
+            Button("←") { model.nudgeOffset(dx: -AirMapPolicy.offsetStep, dy: 0) }
+            Button("→") { model.nudgeOffset(dx: AirMapPolicy.offsetStep, dy: 0) }
+            Button("↑") { model.nudgeOffset(dx: 0, dy: -AirMapPolicy.offsetStep) }
+            Button("↓") { model.nudgeOffset(dx: 0, dy: AirMapPolicy.offsetStep) }
+            Text(model.patchOffset.map { String(format: "%+.0f, %+.0f pt", $0.x, $0.y) } ?? "not chosen")
+                .font(.caption.monospaced())
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private func instruction(_ state: AirTraceState) -> String {
+        switch state {
+        case .ready: "Keep looking at the +. Pinch thumb and index, trace one closed outline in the air, return to the start and release."
+        case .tracing: "Tracing — keep your eyes on the +."
+        case .candidateReady: "Review the raw trace (yellow) and bounding ellipse (cyan). Accept or Redo."
+        case .accepted: "Region accepted. Choose the copy offset, then continue to rear calibration."
+        case let .invalid(reason): "Stroke cleared — \(Self.describe(reason)). Redo."
         }
     }
 

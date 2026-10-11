@@ -84,6 +84,7 @@ public struct AirTracePairer: Sendable {
 public struct AirTraceFlow: Sendable {
     public private(set) var session: AirTraceSession
     private var pairer = AirTracePairer()
+    private var lastHandCaptureTime: Double?
 
     public init(session: AirTraceSession) { self.session = session }
 
@@ -105,7 +106,16 @@ public struct AirTraceFlow: Sendable {
     public mutating func handResult(_ hand: NormalizedHandInput?, frame: CaptureFrameKey,
                                     now: Double, geometry: RenderGeometry) {
         let pair = pairer.pair(hand: hand, frame: frame, geometry: session.geometry)
+        if let hand { lastHandCaptureTime = hand.captureTime }
         session.consume(hand: pair.hand, gaze: pair.gaze, now: now, geometry: geometry)
+    }
+
+    /// For capture feeds that only publish detected hands: if a stroke is in progress and no hand
+    /// result has arrived within the pair-age limit, the hand was lost, so the whole stroke is cleared.
+    public mutating func expireStaleHand(now: Double) {
+        guard session.state == .tracing, let last = lastHandCaptureTime, now.isFinite,
+              now - last > AirTraceDefaults.maximumSampleAgeSeconds else { return }
+        session.consume(hand: nil, gaze: nil, now: now, geometry: session.geometry)
     }
 
     /// Min/max bounding ellipse of the pending candidate, for the review screen (ANO-8).
@@ -123,12 +133,14 @@ public struct AirTraceFlow: Sendable {
 
     public mutating func redo() {
         pairer.reset()
+        lastHandCaptureTime = nil
         session.redo()
     }
 
     /// Mode switch, pause, layout change or AR re-run: the stroke cannot continue.
     public mutating func interrupt() {
         pairer.reset()
+        lastHandCaptureTime = nil
         session.interrupt()
     }
 }

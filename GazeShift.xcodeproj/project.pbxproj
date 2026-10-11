@@ -4,6 +4,18 @@
     classes = {};
     objectVersion = 56;
     objects = {
+        F00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowAdapters.swift; sourceTree = "<group>"; };
+        F00000000000000000000002 = {isa = PBXBuildFile; fileRef = F00000000000000000000001; };
+        F00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirMapReviewScreen.swift; sourceTree = "<group>"; };
+        F00000000000000000000004 = {isa = PBXBuildFile; fileRef = F00000000000000000000003; };
+        F00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonControls.swift; sourceTree = "<group>"; };
+        F00000000000000000000006 = {isa = PBXBuildFile; fileRef = F00000000000000000000005; };
+        F00000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = text; path = CompositeShaders.metal; sourceTree = "<group>"; };
+        F00000000000000000000008 = {isa = PBXGroup; children = (F00000000000000000000001, F00000000000000000000003, F00000000000000000000005, F00000000000000000000007); path = Flow; sourceTree = "<group>"; };
+        F00000000000000000000009 = {isa = XCLocalSwiftPackageReference; relativePath = GazeShiftFlow; };
+        F0000000000000000000000A = {isa = XCSwiftPackageProductDependency; productName = GazeShiftFlow; };
+        F0000000000000000000000B = {isa = PBXBuildFile; productRef = F0000000000000000000000A; };
+
         E0000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GazeCalibrationControls.swift; sourceTree = "<group>"; };
         E0000000000000000000000B = {isa = PBXBuildFile; fileRef = E0000000000000000000000A; };
 
@@ -51,10 +63,10 @@
         A00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
         A00000000000000000000005 = {isa = PBXFileReference; explicitFileType = wrapper.application; path = GazeShift.app; sourceTree = BUILT_PRODUCTS_DIR; };
         A00000000000000000000006 = {isa = PBXGroup; children = (A00000000000000000000007, D00000000000000000000004, A00000000000000000000008); sourceTree = "<group>"; };
-        A00000000000000000000007 = {isa = PBXGroup; children = (E0000000000000000000000A, E00000000000000000000008, B00000000000000000000006, B00000000000000000000005, B00000000000000000000004, B00000000000000000000003, B00000000000000000000002, A00000000000000000000003, A00000000000000000000004, B00000000000000000000001); path = GazeShift; sourceTree = "<group>"; };
+        A00000000000000000000007 = {isa = PBXGroup; children = (F00000000000000000000008, E0000000000000000000000A, E00000000000000000000008, B00000000000000000000006, B00000000000000000000005, B00000000000000000000004, B00000000000000000000003, B00000000000000000000002, A00000000000000000000003, A00000000000000000000004, B00000000000000000000001); path = GazeShift; sourceTree = "<group>"; };
         A00000000000000000000008 = {isa = PBXGroup; children = (A00000000000000000000005, D00000000000000000000003); name = Products; sourceTree = "<group>"; };
-        A00000000000000000000009 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (E0000000000000000000000B, E00000000000000000000009, C00000000000000000000005, C00000000000000000000004, C00000000000000000000003, C00000000000000000000002, A00000000000000000000001, A00000000000000000000002, C00000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
-        A0000000000000000000000A = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (E00000000000000000000005); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000009 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F00000000000000000000002, F00000000000000000000004, F00000000000000000000006, E0000000000000000000000B, E00000000000000000000009, C00000000000000000000005, C00000000000000000000004, C00000000000000000000003, C00000000000000000000002, A00000000000000000000001, A00000000000000000000002, C00000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
+        A0000000000000000000000A = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (E00000000000000000000005, F0000000000000000000000B); runOnlyForDeploymentPostprocessing = 0; };
         A0000000000000000000000B = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000006); runOnlyForDeploymentPostprocessing = 0; };
         A0000000000000000000000C = {
             isa = PBXNativeTarget;
@@ -62,7 +74,7 @@
             buildPhases = (A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000B);
             buildRules = ();
             dependencies = ();
-            packageProductDependencies = (E00000000000000000000004);
+            packageProductDependencies = (E00000000000000000000004, F0000000000000000000000A);
             name = GazeShift;
             productName = GazeShift;
             productReference = A00000000000000000000005;
@@ -78,7 +90,7 @@
             knownRegions = (en, Base);
             mainGroup = A00000000000000000000006;
             productRefGroup = A00000000000000000000008;
-            packageReferences = (E00000000000000000000003);
+            packageReferences = (E00000000000000000000003, F00000000000000000000009);
             projectDirPath = "";
             projectRoot = "";
             targets = (A0000000000000000000000C, D00000000000000000000008);

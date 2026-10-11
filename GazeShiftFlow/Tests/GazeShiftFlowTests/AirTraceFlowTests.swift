@@ -60,6 +60,24 @@ struct AirTraceFlowTests {
         #expect(flow.state == .invalid(.missingPair))
     }
 
+    // Break caught: a stroke staying "tracing" forever after the hand silently leaves the frame.
+    @Test func handSilenceLongerThanPairAgeClearsStroke() {
+        var flow = Fixture.makeFlow()
+        for i in 0..<5 { Fixture.step(&flow, frame: i, point: Fixture.outlinePoint(i)) }
+        let lastHand = 1 + 4 * 0.02
+        flow.expireStaleHand(now: lastHand + 0.2)
+        #expect(flow.state == .tracing)
+        flow.expireStaleHand(now: lastHand + 0.3)
+        #expect(flow.state == .invalid(.missingPair))
+        #expect(flow.rawTrace.isEmpty)
+    }
+
+    @Test func staleHandExpiryIgnoresIdleSession() {
+        var flow = Fixture.makeFlow()
+        flow.expireStaleHand(now: 100)
+        #expect(flow.state == .ready)
+    }
+
     @Test func redoAfterInvalidStartsCleanAndCanSucceed() {
         var flow = Fixture.makeFlow()
         Fixture.step(&flow, frame: 0, point: Fixture.outlinePoint(0))
