@@ -10,7 +10,7 @@ enum AirMapPolicy {
     static let offsetStep = 20.0
 }
 
-/// Owns one air-trace attempt and pending reviewed provenance; no rear region is activated here.
+/// Owns one air-trace attempt and the reviewed provenance for a deliberate same-display rear handoff.
 @MainActor
 final class AirTraceModel: ObservableObject {
     @Published private(set) var flow: AirTraceFlow?
@@ -23,6 +23,7 @@ final class AirTraceModel: ObservableObject {
     private var pendingRearReset = false
     private var retainedInRear = false
     private var regionGeneration: UInt64?
+    private var regionRequiresUnvalidatedGaze = false
 
     /// Raw events preserve nil/error inputs and source identity before display filtering.
     func attach<P: Publisher>(events: P, gaze: @escaping () -> GazeSession)
@@ -42,6 +43,7 @@ final class AirTraceModel: ObservableObject {
         pendingRearReset = false
         retainedInRear = false
         regionGeneration = generation
+        regionRequiresUnvalidatedGaze = false
         let fixation = ScreenPoint(x: AirMapPolicy.normalizedFixation.x * geometry.width,
                                    y: AirMapPolicy.normalizedFixation.y * geometry.height)
         flow = (try? AirTraceSession(geometry: geometry, fixation: fixation,
@@ -75,6 +77,7 @@ final class AirTraceModel: ObservableObject {
     func accept() {
         guard validateEligibility(), var current = flow else { return }
         reviewedRegion = try? current.accept()
+        regionRequiresUnvalidatedGaze = reviewedRegion != nil && currentGaze?().report?.passesCompleteGate != true
         flow = current
     }
 
@@ -82,12 +85,13 @@ final class AirTraceModel: ObservableObject {
         guard validateEligibility(), var current = flow else { return }
         reviewedRegion = nil
         patchOffset = nil
+        regionRequiresUnvalidatedGaze = false
         current.redo()
         flow = current
     }
 
     /// Only the explicit front→rear selection may retain the accepted front provenance.
-    /// shortcut: this is pending provenance only; activate a rear region in the later validated P3 handoff.
+    /// The original front provenance stays pending until the rear capture reset completes.
     func prepareForRearSelection() {
         guard let region = reviewedRegion, let gaze = currentGaze?(), isEligible(gaze),
               gaze.geometry == region.displayGeometry else { interrupt(); return }
@@ -110,6 +114,7 @@ final class AirTraceModel: ObservableObject {
         pendingRearReset = false
         retainedInRear = false
         regionGeneration = nil
+        regionRequiresUnvalidatedGaze = false
         guard var current = flow else { return }
         current.interrupt()
         flow = current
@@ -121,9 +126,15 @@ final class AirTraceModel: ObservableObject {
     }
 
     /// Team-approved "Unvalidated gaze demo": accept the provisional fit instead of a passed report.
-    /// Turning it off re-checks immediately, so active strokes and regions fail closed.
+    /// Leaving the demo clears dependent provenance even in pending/retained rear state: a region
+    /// accepted with a failed front report must not become validated by a later passed rear report.
     var allowUnvalidatedGaze = false {
-        didSet { if oldValue, !allowUnvalidatedGaze { validateEligibility() } }
+        didSet {
+            if oldValue, !allowUnvalidatedGaze {
+                if regionRequiresUnvalidatedGaze { interrupt() }
+                else { validateEligibility() }
+            }
+        }
     }
 
     private func isEligible(_ gaze: GazeSession) -> Bool {
@@ -250,7 +261,10 @@ struct AirMapControls: View {
                     .disabled(startBlocker != nil)
                     .accessibilityIdentifier("airMapStart")
                 if let startBlocker { Text(startBlocker).font(.caption).foregroundStyle(.secondary) }
-                if model.reviewedRegion != nil { Text("Accepted front region pending rear calibration; not active in live mode.").font(.caption) }
+                if model.reviewedRegion != nil {
+                    Text("Accepted front region. Rear effects require the same-display Rear + eyes handoff and a fresh rear calibration.")
+                        .font(.caption)
+                }
             }
         }
     }

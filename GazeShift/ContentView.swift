@@ -300,7 +300,7 @@ struct ContentView: View {
                 .accessibilityIdentifier("unvalidatedDemoToggle")
             Text(unvalidatedDemo
                  ? "ON: air map and simulation use the provisional calibration even though its accuracy test did not pass. For showing the idea only — not evidence."
-                 : "Off: air map and simulation wait for a passed calibration report.")
+                 : "Off: air map and simulation wait for a passed calibration report. Turning the demo off clears regions accepted without a passed front report; draw those again in Front setup.")
                 .font(.caption).foregroundStyle(unvalidatedDemo ? Color.orange : Color.secondary)
         }
     }
