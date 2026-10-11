@@ -24,6 +24,17 @@ public struct AirTraceHandSample: Sendable {
         self.captureTimestamp = captureTimestamp; self.generation = generation
     }
 }
+/// The active manual drawing path needs only a real, mapped index fingertip.
+public struct AirTraceIndexSample: Sendable {
+    public let indexTip: ScreenPoint
+    public let indexConfidence: Double
+    public let captureTimestamp: Double
+    public let generation: UInt64
+    public init(indexTip: ScreenPoint, indexConfidence: Double, captureTimestamp: Double, generation: UInt64) {
+        self.indexTip = indexTip; self.indexConfidence = indexConfidence
+        self.captureTimestamp = captureTimestamp; self.generation = generation
+    }
+}
 public struct AirTraceGazeSample: Sendable {
     public let point: ScreenPoint?
     /// True only after the adapter checks calibrated gaze, tracking and open-eye quality.
@@ -42,7 +53,7 @@ public enum AirTraceRejection: String, Error, Equatable, Sendable {
     case openStroke, notReadyForReview, invalidModeTransition
 }
 public enum AirTraceState: Equatable, Sendable {
-    case ready, tracing, candidateReady, accepted
+    case ready, armed, tracing, candidateReady, accepted
     case invalid(AirTraceRejection)
 }
 public struct DisplayEllipse: Equatable, Sendable {
@@ -111,6 +122,8 @@ public struct AirTraceSession: Sendable {
     private var lastCaptureTimestamp: Double?
     private var lastSourceGazeTimestamp: Double?
     private var handOnly = false
+    private var indexOnly = false
+    private var drawingStartedAt: Double?
 
     public init(geometry: RenderGeometry, fixation: ScreenPoint, eyeStateDescription: String, captureGeneration: UInt64) throws {
         guard geometry.mode == .frontSetup, geometry.contains(fixation),
@@ -130,12 +143,69 @@ public struct AirTraceSession: Sendable {
         handOnly = true
     }
 
+    public init(indexOnlyGeometry geometry: RenderGeometry, captureGeneration: UInt64) throws {
+        try self.init(handOnlyGeometry: geometry, captureGeneration: captureGeneration)
+        indexOnly = true
+    }
+
+    /// Arming records no cached cursor points. Only captures at or after this explicit action qualify.
+    public mutating func startDrawing(at now: Double, geometry currentGeometry: RenderGeometry) {
+        guard indexOnly, state == .ready else { return }
+        guard currentGeometry == geometry else { invalidate(.geometryChanged); return }
+        guard now.isFinite, now >= 0 else { invalidate(.invalidTimestamp); return }
+        clearHistory()
+        drawingStartedAt = now
+        state = .armed
+    }
+
+    /// `captureTimestamp` also accompanies nil Vision results, so pre-Start completions can be ignored.
+    public mutating func consumeIndex(_ index: AirTraceIndexSample?, captureTimestamp: Double,
+                                      now: Double, geometry currentGeometry: RenderGeometry) {
+        guard indexOnly, state == .armed || state == .tracing else { return }
+        if let drawingStartedAt, captureTimestamp.isFinite, captureTimestamp < drawingStartedAt { return }
+        expireInputs(now: now, geometry: currentGeometry)
+        guard state == .armed || state == .tracing else { return }
+        let reason: AirTraceRejection?
+        if let index {
+            if !now.isFinite || !index.captureTimestamp.isFinite || index.captureTimestamp < 0
+                || now < index.captureTimestamp { reason = .invalidTimestamp }
+            else if index.captureTimestamp != captureTimestamp { reason = .unpairedCapture }
+            else if now - index.captureTimestamp > AirTraceDefaults.maximumSampleAgeSeconds { reason = .stalePair }
+            else if index.generation != captureGeneration { reason = .generationChanged }
+            else if let lastCaptureTimestamp, index.captureTimestamp <= lastCaptureTimestamp { reason = .duplicateCapture }
+            else if let lastCaptureTimestamp, index.captureTimestamp - lastCaptureTimestamp > AirTraceDefaults.maximumSampleAgeSeconds { reason = .captureGap }
+            else if !geometry.contains(index.indexTip) || !index.indexConfidence.isFinite
+                || index.indexConfidence < AirTraceDefaults.minimumHandConfidence || index.indexConfidence > 1 { reason = .invalidHand }
+            else if let sourceTime = lastSourceGazeTimestamp {
+                reason = now < sourceTime ? .invalidTimestamp
+                    : (now - sourceTime > AirTraceDefaults.maximumSampleAgeSeconds ? .stalePair : nil)
+            } else { reason = .missingPair }
+        } else { reason = .missingPair }
+        if let reason {
+            // Wait for the first usable post-Start sample; once drawing, a loss clears the attempt.
+            if state == .tracing { invalidate(reason) }
+            return
+        }
+        guard let index else { return }
+        rawTrace.append(index.indexTip)
+        lastCaptureTimestamp = index.captureTimestamp
+        state = .tracing
+    }
+
+    public mutating func finishDrawing(now: Double, geometry currentGeometry: RenderGeometry) {
+        guard indexOnly, state == .armed || state == .tracing else { return }
+        expireInputs(now: now, geometry: currentGeometry)
+        guard state == .armed || state == .tracing else { return }
+        finishCandidate()
+    }
+
     /// Camera source liveness is independent of Vision's asynchronous hand results.
     public mutating func observeSource(captureTimestamp: Double, generation: UInt64, now: Double,
                                       geometry currentGeometry: RenderGeometry) {
         guard handOnly else { return }
+        if indexOnly, let drawingStartedAt, captureTimestamp.isFinite, captureTimestamp < drawingStartedAt { return }
         expireInputs(now: now, geometry: currentGeometry)
-        guard state == .ready || state == .tracing else { return }
+        guard state == .ready || state == .armed || state == .tracing else { return }
         let reason: AirTraceRejection?
         if generation != captureGeneration { reason = .generationChanged }
         else if !now.isFinite || !captureTimestamp.isFinite || captureTimestamp < 0 || now < captureTimestamp { reason = .invalidTimestamp }
@@ -150,7 +220,7 @@ public struct AirTraceSession: Sendable {
 
     public mutating func consumeHand(_ hand: AirTraceHandSample?, now: Double,
                                      geometry currentGeometry: RenderGeometry) {
-        guard handOnly else { return }
+        guard handOnly, !indexOnly else { return }
         guard currentGeometry == geometry else { invalidate(.geometryChanged); return }
         guard state == .ready || state == .tracing else { return }
         let sourceReason: AirTraceRejection? = lastSourceGazeTimestamp.map {
@@ -320,5 +390,6 @@ public struct AirTraceSession: Sendable {
         reviewedRegion = nil
         lastCaptureTimestamp = nil
         lastSourceGazeTimestamp = nil
+        drawingStartedAt = nil
     }
 }

@@ -191,7 +191,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
         captureClock = CaptureClock()
         sourceFrameCount = 0
         frameDiagnostics = nil
-        handMessage = mode == .setupFront ? "Hand unavailable — waiting for both tips" : "Hand tracking off in rear mode"
+        handMessage = mode == .setupFront ? "Hand unavailable — waiting for index fingertip" : "Hand tracking off in rear mode"
         handTracker.invalidatePending()
         self.status = status
         publishEvent(.reset(generation: generation, mode: mode))
@@ -301,7 +301,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
         switch result {
         case .success(let observation):
             hand = observation
-            handMessage = observation == nil ? "Hand unavailable — show index and thumb tips" : "Hand cursor active (2D image landmarks)"
+            handMessage = observation == nil ? "Hand unavailable — show index fingertip" : "Index cursor active (2D image landmark)"
         case .failure(let error):
             hand = nil
             handMessage = "Hand unavailable — Vision: \(error.localizedDescription)"

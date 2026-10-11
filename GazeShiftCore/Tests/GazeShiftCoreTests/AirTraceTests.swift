@@ -2,6 +2,16 @@ import XCTest
 @testable import GazeShiftCore
 
 final class AirTraceTests: XCTestCase {
+    // Reproduces the phone failure: a usable index could not draw without a visible thumb.
+    func testIndexCanDrawWhenThumbIsUnavailable() throws {
+        var session = try AirTraceSession(indexOnlyGeometry: geometry(), captureGeneration: 1)
+        session.startDrawing(at: 1, geometry: try geometry())
+        session.observeSource(captureTimestamp: 1.01, generation: 1, now: 1.01, geometry: try geometry())
+        session.consumeIndex(AirTraceIndexSample(indexTip: ScreenPoint(x: 140, y: 130),
+            indexConfidence: 1, captureTimestamp: 1.01, generation: 1),
+            captureTimestamp: 1.01, now: 1.01, geometry: try geometry())
+        XCTAssertEqual(session.rawTrace.count, 1)
+    }
     // Break caught: an otherwise valid hand outline waits for eye data in the manual experiment.
     func testHandOnlyOutlineDoesNotNeedEyeSamples() throws {
         var session = try AirTraceSession(handOnlyGeometry: geometry(), captureGeneration: 1)

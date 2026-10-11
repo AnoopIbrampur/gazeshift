@@ -111,7 +111,7 @@
                 INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait";
                 PRODUCT_BUNDLE_IDENTIFIER = "com.hussainaltufayli.GazeShift";
                 PRODUCT_NAME = "$(TARGET_NAME)";
-                CURRENT_PROJECT_VERSION = "1011.18.10";
+                CURRENT_PROJECT_VERSION = "1011.18.20";
                 MARKETING_VERSION = "0.1";
                 TARGETED_DEVICE_FAMILY = "1";
                 SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -130,7 +130,7 @@
                 INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait";
                 PRODUCT_BUNDLE_IDENTIFIER = "com.hussainaltufayli.GazeShift";
                 PRODUCT_NAME = "$(TARGET_NAME)";
-                CURRENT_PROJECT_VERSION = "1011.18.10";
+                CURRENT_PROJECT_VERSION = "1011.18.20";
                 MARKETING_VERSION = "0.1";
                 TARGETED_DEVICE_FAMILY = "1";
                 SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

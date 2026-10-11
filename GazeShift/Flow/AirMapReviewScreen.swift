@@ -8,6 +8,9 @@ enum AirMapPolicy {
     static let normalizedFixation = ScreenPoint(x: 0.5, y: 0.5)
     static let eyeStateDescription = "Eye tracking disabled · screen-fixed approximation"
     static let offsetStep = 20.0
+    // A thicker raw line and a start dot make closure visible over a busy camera scene.
+    static let traceLineWidth = 3.0
+    static let startDotDiameter = 10.0
 }
 
 // Dormant eye-driven adapter retained for a future separately validated experiment.
@@ -215,11 +218,21 @@ final class AirTraceModel: ObservableObject {
         }
     }
 
-    func begin(geometry: RenderGeometry, generation: UInt64) {
+    func begin(geometry: RenderGeometry, generation: UInt64, now: Double = ProcessInfo.processInfo.systemUptime) {
         guard geometry.mode == .frontSetup else { return }
+        if let state = flow?.state, state == .armed || state == .tracing || state == .candidateReady { return }
         interrupt()
         regionGeneration = generation
-        flow = (try? AirTraceSession(handOnlyGeometry: geometry, captureGeneration: generation)).map(AirTraceFlow.init(session:))
+        guard let session = try? AirTraceSession(indexOnlyGeometry: geometry, captureGeneration: generation) else { return }
+        var current = AirTraceFlow(session: session)
+        current.startDrawing(at: now, geometry: geometry)
+        flow = current
+    }
+
+    func finish() {
+        guard var current = flow else { return }
+        current.finishDrawing(now: ProcessInfo.processInfo.systemUptime, geometry: current.geometry)
+        flow = current
     }
 
     func end() { flow = nil }
@@ -301,8 +314,8 @@ final class AirTraceModel: ObservableObject {
             flow = current
         case let .hand(result, identity, mode):
             guard var current = currentFlow(identity: identity, mode: mode) else { return }
-            current.handOnlyResult((try? result.get()).map(FlowAdapters.handInput), frame: FlowAdapters.frameKey(identity),
-                                   now: now, geometry: current.geometry)
+            current.indexResult((try? result.get()).map(FlowAdapters.indexInput), frame: FlowAdapters.frameKey(identity),
+                                captureTime: FlowAdapters.captureTime(identity), now: now, geometry: current.geometry)
             flow = current
         }
     }
@@ -337,7 +350,12 @@ struct AirMapOverlay: View {
                 path.move(to: FlowAdapters.cgPoint(first))
                 for point in flow.rawTrace.dropFirst() { path.addLine(to: FlowAdapters.cgPoint(point)) }
             }
-            .stroke(Color.yellow, lineWidth: 1.5)
+            .stroke(Color.yellow, lineWidth: AirMapPolicy.traceLineWidth)
+            if let first = flow.rawTrace.first {
+                Circle().stroke(.yellow, lineWidth: AirMapPolicy.traceLineWidth)
+                    .frame(width: AirMapPolicy.startDotDiameter, height: AirMapPolicy.startDotDiameter)
+                    .position(FlowAdapters.cgPoint(first))
+            }
             if let ellipse = flow.candidateEllipse {
                 Path(ellipseIn: CGRect(x: ellipse.center.x - ellipse.radii.x, y: ellipse.center.y - ellipse.radii.y,
                                        width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y))
@@ -367,17 +385,23 @@ struct AirMapControls: View {
                 Text(instruction(flow.state)).font(.subheadline)
                 Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)
                 HStack {
-                    Button("Redo") { model.redo() }.buttonStyle(.bordered).disabled(startBlocker != nil).accessibilityIdentifier("airMapRedo")
+                    if flow.state == .armed || flow.state == .tracing {
+                        Button("Finish shape") { model.finish() }
+                            .buttonStyle(.borderedProminent).accessibilityIdentifier("airMapFinish")
+                    } else {
+                        Button("Draw again") { model.end(); onStart() }
+                            .buttonStyle(.bordered).disabled(startBlocker != nil).accessibilityIdentifier("airMapRedo")
+                    }
                     Button("Accept region") { model.accept() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(startBlocker != nil || flow.state != .candidateReady)
+                        .disabled(flow.state != .candidateReady)
                         .accessibilityIdentifier("airMapAccept")
                     Spacer()
                     Button("Close") { model.end() }.buttonStyle(.bordered)
                 }
 
             } else {
-                Button("Start air map", action: onStart)
+                Button("Start drawing", action: onStart)
                     .buttonStyle(.borderedProminent)
                     .disabled(startBlocker != nil)
                     .accessibilityIdentifier("airMapStart")
@@ -406,11 +430,12 @@ struct AirMapControls: View {
 
     private func instruction(_ state: AirTraceState) -> String {
         switch state {
-        case .ready: "Pinch thumb and index, trace one closed outline in the air, return to the start and release."
-        case .tracing: "Tracing — keep both fingertips visible."
-        case .candidateReady: "Review the raw trace (yellow) and bounding ellipse (cyan). Accept or Redo."
+        case .ready: "Press Start drawing to record your index finger. Ordinary finger movement does not draw."
+        case .armed: "Drawing armed — move your index finger in the camera view to begin the yellow line."
+        case .tracing: "Draw a closed outline with your index finger. Return to the yellow start dot, then tap Finish shape with your other hand while keeping the index visible."
+        case .candidateReady: "Shape frozen. Review the yellow trace and cyan ellipse, then Accept region or Draw again."
         case .accepted: "Screen-fixed region accepted. Choose a copy offset, then switch to Rear scene."
-        case let .invalid(reason): "Stroke cleared — \(Self.describe(reason)). Redo."
+        case let .invalid(reason): "Stroke cleared — \(Self.describe(reason)). Choose Draw again."
         }
     }
 
@@ -418,7 +443,7 @@ struct AirMapControls: View {
         switch reason {
         case .fixationDrift: "eyes left the reference"
         case .invalidGaze: "eyes unavailable or blinking"
-        case .invalidHand: "fingertips not confidently tracked"
+        case .invalidHand: "index finger not confidently tracked"
         case .missingPair, .unpairedCapture: "hand or source frame missing"
         case .stalePair, .captureGap, .duplicateCapture, .invalidTimestamp: "tracking data too old or skipped"
         case .generationChanged, .interrupted, .geometryChanged, .invalidModeTransition: "capture restarted or layout changed"

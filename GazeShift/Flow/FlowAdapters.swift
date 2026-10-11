@@ -27,11 +27,19 @@ enum FlowAdapters {
                                features: features)
     }
 
-    static func handInput(_ hand: HandObservation) -> NormalizedHandInput {
-        NormalizedHandInput(frame: frameKey(hand.identity), captureTime: captureTime(hand.identity),
+    /// Dormant pinch adapter requires actual thumb data; the active index path never fabricates it.
+    static func handInput(_ hand: HandObservation) -> NormalizedHandInput? {
+        guard let thumbTip = hand.thumbTip, let thumbConfidence = hand.thumbConfidence else { return nil }
+        return NormalizedHandInput(frame: frameKey(hand.identity), captureTime: captureTime(hand.identity),
                             indexTip: ScreenPoint(x: Double(hand.indexTip.x), y: Double(hand.indexTip.y)),
-                            thumbTip: ScreenPoint(x: Double(hand.thumbTip.x), y: Double(hand.thumbTip.y)),
-                            indexConfidence: Double(hand.indexConfidence), thumbConfidence: Double(hand.thumbConfidence))
+                            thumbTip: ScreenPoint(x: Double(thumbTip.x), y: Double(thumbTip.y)),
+                            indexConfidence: Double(hand.indexConfidence), thumbConfidence: Double(thumbConfidence))
+    }
+
+    static func indexInput(_ hand: HandObservation) -> NormalizedIndexInput {
+        NormalizedIndexInput(frame: frameKey(hand.identity), captureTime: captureTime(hand.identity),
+            indexTip: ScreenPoint(x: Double(hand.indexTip.x), y: Double(hand.indexTip.y)),
+            indexConfidence: Double(hand.indexConfidence))
     }
 
     static func cgPoint(_ point: ScreenPoint) -> CGPoint { CGPoint(x: point.x, y: point.y) }
