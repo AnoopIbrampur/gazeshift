@@ -61,3 +61,10 @@ F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks
 swift test -Xswiftc -F -Xswiftc $F -Xlinker -rpath -Xlinker $F
 ```
 With Xcode installed, a plain `swift test` (or ⌘U on the package) works.
+
+## Current wiring on `anoop/flow-and-ui` (interim)
+
+- `ContentView` already hosts the air map: `AirMapOverlay(model:geometry:)` inside the measured preview (only when `gaze.geometry` exists), `AirMapControls` (Start gated on Front + `.ready` + `gaze.report?.passesCompleteGate`, Redo/Accept/Close, offset nudges) below it, `airTrace.tick(now:geometry:)` on the existing timer (calls `expireInputs`), and `interrupt()` on Front/Rear/Stop/Retry.
+- **Interim feed:** `AirTraceModel.attach(snapshots: capture.$snapshot)` records each new `rawEyeIdentity` frame and each new `snapshot.hand`. This is NOT the ordered capture-event feed in step 6. Snapshots can skip a frame's eyes, and empty Vision results are not delivered, so loss is caught by `expireInputs` rather than immediately. `ingestEyes`/`ingestHand`/`expireInputs` exist on the model for the step-6 wiring from `CaptureController`. Once that's in place, drop `attach`.
+- Duplicate `CalibrationRun`/`CalibrationScreen` are removed from this branch; `GazeSession` is the only calibrator.
+- Not built for iOS on this branch since the merge; the Flow logic tests pass (24/24, fixtures only).
