@@ -23,7 +23,9 @@ final class CaptureModel: ObservableObject {
     func start(_ mode: CaptureMode) { controller.start(mode) }
     func retry() { controller.start(snapshot.mode) }
     func stop() { controller.stop() }
-    func layout(_ size: CGSize, scale: CGFloat) { controller.layout(size, scale: scale) }
+    func layout(_ size: CGSize, scale: CGFloat, orientation: UIInterfaceOrientation = .portrait) {
+        controller.layout(size, scale: scale, orientation: orientation)
+    }
     func rendererFailed(_ message: String) { controller.rendererFailed(message) }
     private func accept(_ next: CaptureSnapshot) {
         guard next.generation >= snapshot.generation, next.sequence > snapshot.sequence else { return }
@@ -56,6 +58,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
     private var support: CaptureSupport?
     private var viewport: CGSize = .zero
     private var displayScale: CGFloat = 0
+    private var interfaceOrientation: UIInterfaceOrientation = .portrait
     private var running = false
     private var cutoffTimestamp: TimeInterval = -.infinity
     private var freshness = CaptureFreshness(generation: 0)
@@ -130,11 +133,13 @@ final class CaptureController: NSObject, ARSessionDelegate {
         }
     }
 
-    func layout(_ size: CGSize, scale: CGFloat) {
+    func layout(_ size: CGSize, scale: CGFloat, orientation: UIInterfaceOrientation = .portrait) {
         queue.async { [weak self] in
-            guard let self, self.viewport != size || self.displayScale != scale else { return }
+            guard let self, self.viewport != size || self.displayScale != scale
+                    || self.interfaceOrientation != orientation else { return }
             self.viewport = size
             self.displayScale = scale
+            self.interfaceOrientation = orientation
             #if !targetEnvironment(simulator)
             if self.running { self.cutoffTimestamp = self.session.currentFrame?.timestamp ?? self.cutoffTimestamp }
             #endif
@@ -229,12 +234,23 @@ final class CaptureController: NSObject, ARSessionDelegate {
         if changed { emit() }
     }
 
+    /// Upright EXIF orientation of the landscape camera buffer for the current UI orientation, so Vision
+    /// sees an upright hand. DisplayGeometry undoes the same orientation, so coordinates stay exact.
+    private static func visionOrientation(for orientation: UIInterfaceOrientation) -> CGImagePropertyOrientation {
+        switch orientation {
+        case .landscapeRight: .up
+        case .landscapeLeft: .down
+        case .portraitUpsideDown: .left
+        default: .right
+        }
+    }
+
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard running, frame.timestamp > cutoffTimestamp else { return }
         sourceFrameCount &+= 1
         let now = ProcessInfo.processInfo.systemUptime
         guard let identity = captureClock.identity(generation: generation, captureTimestamp: frame.timestamp, receivedAt: now) else { return }
-        guard let geometry = DisplayGeometry(viewport: viewport, displayTransform: frame.displayTransform(for: .portrait, viewportSize: viewport), orientation: .right, mirrored: mode == .setupFront) else {
+        guard let geometry = DisplayGeometry(viewport: viewport, displayTransform: frame.displayTransform(for: interfaceOrientation, viewportSize: viewport), orientation: Self.visionOrientation(for: interfaceOrientation), mirrored: mode == .setupFront) else {
             invalidate(status: .sceneUnavailable)
             emit()
             return
