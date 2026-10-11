@@ -4,7 +4,7 @@ import SwiftUI
 struct GazeShiftApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            DemoRootView()
                 .preferredColorScheme(.dark)
         }
     }
