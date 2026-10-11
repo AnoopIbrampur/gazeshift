@@ -51,6 +51,33 @@ public struct CompositionPlan: Equatable, Sendable {
 }
 
 public enum CompositionPlanner {
+    /// Camera freshness is the sole live-input gate for this explicitly screen-fixed experiment.
+    public static func planScreenFixed(mode: ViewMode, region: ReviewedRegion?, sourceAvailable: Bool,
+                                       geometry: RenderGeometry, userOffset: ScreenPoint,
+                                       cameraSamplingBounds: ScreenRect?) -> CompositionPlan {
+        let label: String? = if case .comparison = mode { CompositionPlan.simulationLabelText } else { nil }
+        func originalOnly(_ status: String) -> CompositionPlan {
+            CompositionPlan(copy: nil, blur: nil, statusText: status, simulationLabel: label)
+        }
+        guard sourceAvailable else { return originalOnly("Scene unavailable") }
+        if mode == .comparison(.original) { return originalOnly("Original") }
+        guard let region else { return originalOnly("No reviewed region — original view") }
+        guard let ellipse = try? region.screenFixedEllipse(geometry: geometry) else {
+            return originalOnly("Region layout changed — original view")
+        }
+        if mode == .comparison(.simulatedBlur) {
+            return CompositionPlan(copy: nil, blur: BlurLayer(center: ellipse.center, radii: ellipse.radii),
+                                   statusText: "Screen-fixed simulated blur", simulationLabel: label)
+        }
+        let result = PlacementPlanner.planScreenFixed(region: region, geometry: geometry, userOffset: userOffset,
+                                                      cameraSamplingBounds: cameraSamplingBounds)
+        guard case let .accepted(placement) = result else { return originalOnly(result.statusText) }
+        return CompositionPlan(copy: CopyLayer(source: placement.source, destination: placement.destination),
+                               blur: mode == .live ? nil : BlurLayer(center: ellipse.center, radii: ellipse.radii),
+                               statusText: mode == .live ? "Screen-fixed copy" : "Screen-fixed simulated blur + copy",
+                               simulationLabel: label)
+    }
+
     /// `gaze` must be nil whenever the shared loss rules say tracking is unavailable or recovering;
     /// then every adaptive layer is removed and the healthy original is shown with a warning.
     public static func plan(mode: ViewMode, region: ReviewedRegion?, gaze: ScreenPoint?,

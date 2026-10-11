@@ -97,7 +97,7 @@ enum CaptureLimits {
 enum CaptureMode: String, CaseIterable {
     case setupFront
     case liveRear
-    var title: String { self == .setupFront ? "Front setup" : "Rear + eyes" }
+    var title: String { self == .setupFront ? "Front setup" : "Rear scene" }
 }
 
 struct FrameIdentity: Equatable {
@@ -145,6 +145,7 @@ struct HandObservation {
 
 /// Ordered sensing events, separate from display snapshots and their freshness filtering.
 enum CaptureEvent {
+    case source(identity: FrameIdentity, mode: CaptureMode)
     case eyes(EyeObservation?, identity: FrameIdentity, mode: CaptureMode)
     case hand(Result<HandObservation?, Error>, identity: FrameIdentity, mode: CaptureMode)
     case reset(generation: UInt64, mode: CaptureMode)
@@ -177,7 +178,7 @@ enum CaptureStatus: Equatable {
         case .sceneUnavailable: return "Scene unavailable"
         case .trackingUnavailable: return "Tracking unavailable — original view"
         case .recovering(let count): return "Tracking recovering (\(count)/\(CaptureLimits.recoverySampleCount)) — original view"
-        case .ready: return "Original view — raw tracking active"
+        case .ready: return "Live camera ready — eye tracking disabled"
         case .unsupported(let detail): return detail
         case .failed(let detail): return "Scene unavailable — \(detail)"
         }
@@ -188,7 +189,7 @@ struct CaptureSupport {
     let frontFace: Bool
     let world: Bool
     let rearFace: Bool
-    var text: String { "Front face \(frontFace ? "yes" : "no") · Rear world \(world ? "yes" : "no") · Rear eyes \(rearFace ? "yes" : "no")" }
+    var text: String { "Front camera provider \(frontFace ? "yes" : "no") · Rear scene \(world ? "yes" : "no")" }
 }
 
 struct CaptureSnapshot {
@@ -211,12 +212,12 @@ struct CaptureSnapshot {
     var mainDelivery: CaptureMainDelivery? = nil
     /// Main-thread delivery can be delayed after capture validated a frame.
     /// Recheck every observation before an immutable update reaches the display.
-    func forDisplay(at now: TimeInterval) -> CaptureSnapshot {
+    func forDisplay(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> CaptureSnapshot {
         let staleScene = renderPacket.map { $0.identity.generation != generation || !$0.identity.isFresh(at: now) } ?? false
         let safePacket = staleScene ? nil : renderPacket
         let validEyes = safePacket != nil && eyes?.isValid == true && eyeIdentity.map { $0.generation == generation && $0.isFresh(at: now) } == true
         let safeHand = safePacket == nil ? nil : hand.flatMap { $0.identity.generation == generation && $0.identity.isFresh(at: now) ? $0 : nil }
-        let safeStatus: CaptureStatus = staleScene ? .sceneUnavailable : (safePacket != nil && !validEyes ? .trackingUnavailable : status)
+        let safeStatus: CaptureStatus = staleScene ? .sceneUnavailable : status
         let safeHandMessage = staleScene ? "Hand unavailable — stale source" : (hand != nil && safeHand == nil ? "Hand unavailable — stale result" : handMessage)
         let safeRawIdentity = rawEyeIdentity.flatMap { safePacket != nil && $0.generation == generation && $0.isFresh(at: now) ? $0 : nil }
         // Preserve matching diagnostics even when stale display input is removed, so late delivery stays measurable.

@@ -2,6 +2,18 @@ import XCTest
 @testable import GazeShiftCore
 
 final class AirTraceTests: XCTestCase {
+    // Break caught: an otherwise valid hand outline waits for eye data in the manual experiment.
+    func testHandOnlyOutlineDoesNotNeedEyeSamples() throws {
+        var session = try AirTraceSession(handOnlyGeometry: geometry(), captureGeneration: 1)
+        for i in 0...24 {
+            let angle = Double(i % 24) * 2 * .pi / 24
+            let point = ScreenPoint(x: 110 + 30 * cos(angle), y: 130 + 20 * sin(angle))
+            let time = 1 + Double(i) * 0.01
+            session.observeSource(captureTimestamp: time, generation: 1, now: time, geometry: try geometry())
+            session.consumeHand(hand(point: point, time: time, release: i == 24), now: time, geometry: try geometry())
+        }
+        XCTAssertEqual(session.state, .candidateReady)
+    }
     // Break caught: recentering on gaze/centroid instead of the stationary fixation.
     func testClosedMinMaxEllipsePreservesAsymmetricFixationOffsetAndNeedsAcceptance() throws {
         var session = try makeSession()

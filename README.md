@@ -1,27 +1,29 @@
 # GazeShift
 
-GazeShift is a working title for an experimental assistive-vision project: use eye tracking to move an image transformation with a person's gaze, exploring whether important visual content could eventually be shifted toward usable peripheral vision when central vision is impaired.
+GazeShift is a working title for an experimental phone display tool: trace an assumed affected region with a finger in the air, review an approximate ellipse, and copy the original image content from that region to a chosen display offset.
 
-**Current status: a native app and offline flow preparation exist; physical gaze gates remain unpassed.** The [user-reported front and rear gaze tests on 2026-10-11](docs/P2_REAR_GAZE_BLOCKER.md) and [earlier front diagnostic report](docs/P2_FRONT_DIAGNOSTIC_BLOCKER.md) failed their computed accuracy gates. The [subsequent white-target runs](docs/P2_OFFSCREEN_DIAGNOSTICS.md) also failed accuracy, including a supported-phone comparison. App-only pose and delivery summaries now support investigation; they do not fix gaze accuracy. A working end-to-end demo and clinical benefit remain unverified.
+**Current direction: manual screen-space approximation, with no eye tracking.** The user explicitly chose this pivot on 2026-10-11 after the gaze experiments failed their accuracy gates. The baseline at `5876905` was built, installed and launched on a physical **iPhone 15 Pro Max** before the pivot edits. The user also reported that the baseline camera opens. That proves deployment and a user-reported camera opening, not air tracing or the new end-to-end flow. Pivot work is in progress and awaits physical-device verification.
 
 ## The first demo
 
-On an iPhone 13, first use the front camera to track a finger tracing an outline in the air while the user fixates a stationary reference. Review a bounding ellipse as an explicit approximation of that outline. Then switch the same ARKit session to the rear scene plus face/eye tracking, recalibrate gaze, and copy the original-image rectangle covering the approximate region to one user-chosen offset. Preserve the region's offset from fixation; reject unavailable, overlapping or off-screen placements. The copy affects only the phone display and can cover existing destination content.
+Use the front camera and Vision hand landmarks to pinch and trace one closed outline in the air. Review its min/max bounding ellipse as an explicit approximation, choose one copy offset, then switch the same ARSession to the rear scene. The reviewed region stays fixed in display coordinates; copy its enclosing rectangle from the original frame to the selected offset. Reject unavailable, overlapping or off-screen placements. The copy affects only the phone display and covers existing destination content.
 
-The immediate success condition is **actual camera-tracked air tracing followed by live eyes driving patch relocation**. Touchscreen tracing, head movement or a scripted marker cannot substitute for these inputs. Normal Live assist stays unblurred; the required, labeled Demo comparison shows Original / Simulated blur / Simulated blur + copy in the same full viewport. Live eyes must move the simulated region and copied patch together, with shared loss/recovery; frozen comparisons are supplementary only. Record the actual device and live comparison as evidence. If rear-camera input falls back to prerecorded video, label it and retain live gaze. The six-hour estimate is optimistic; unfinished requirements must be reported.
+Actual camera-tracked air tracing remains required. Touch controls may operate Review, Redo and offset selection. Eye movement and head movement do not drive the region, and there is no gaze calibration or synthetic gaze input. Accept region selects the labeled Simulated blur preview. Normal Live assist stays unblurred. Preserve the labeled, full-viewport Original / Simulated blur / Simulated blur + copy comparison, using original source pixels and applying blur last.
 
-The longer-term idea is glasses or a headset for people with residual vision and central vision loss, such as age-related macular degeneration. A phone experiment can test the interaction; it cannot establish a medical correction or prove patient benefit.
+Success means a playable recording of actual air tracing, explicit review, rear-scene copying and the three comparison modes on the physical phone. Gesture behavior, placement, source freshness and loss/recovery still need device verification; a build or launch cannot pass those gates.
 
 ## Project documents
 
-- [Project context and working instructions](PROJECT_CONTEXT.md): durable context for ChatGPT and future contributors.
-- [Six-hour build plan](SIX_HOUR_PLAN.md): time budget, first-device go/no-go gate, tests, and demo evidence.
-- [Incremental build prompts](BUILD_PROMPTS.md): copyable native ARKit prompts for setup and every six-hour phase, with acceptance checks and resource links; Vercel is an optional later companion site.
+- [Project context and working instructions](PROJECT_CONTEXT.md): current scope, architecture and evidence limits.
+- [Six-hour build plan](SIX_HOUR_PLAN.md): concise manual-flow implementation and device checks.
+- [Historical build prompts](BUILD_PROMPTS.md): superseded gaze requirements; do not execute them as the current spec.
 - [Private GitHub repository](https://github.com/Hussain-coder-eng/gazeshift).
 - [ChatGPT project](https://chatgpt.com/g/g-p-6acbc5e009008191a0d00a958ec143d0/project).
 
+The [rear gaze blocker](docs/P2_REAR_GAZE_BLOCKER.md), [front diagnostic blocker](docs/P2_FRONT_DIAGNOSTIC_BLOCKER.md) and [off-screen diagnostics](docs/P2_OFFSCREEN_DIAGNOSTICS.md) preserve earlier results. They describe the superseded gaze approach, not current acceptance gates.
+
 ## Evidence and boundaries
 
-Gaze estimates and an air-drawn outline do not map a person's retina. Patient scotoma shape, offset, preferred retinal locus (PRL), clinical calibration, and bilateral viewing remain separate research problems. This controlled, healthy-user demo uses a user-drawn approximate region. Copied content moves with gaze and may move again when looked at; it is a peripheral-viewing experiment. It does not diagnose disease, restore normal sight, replace prescriptions or demonstrate a cure. Compare future user benefit against ordinary magnification before claiming improvement.
+A hand-drawn screen region does not measure retinal damage or follow a retinal blind spot as the eyes move. This manual approximation cannot diagnose disease, restore normal sight, replace prescriptions or establish patient benefit. Simulated blur illustrates the selected region; it does not reproduce a patient's vision. The copy duplicates content and occludes destination content.
 
-Apple documents [combined user face tracking and world tracking](https://developer.apple.com/documentation/arkit/combining-user-face-tracking-and-world-tracking) and the face-relative [`lookAtPoint`](https://developer.apple.com/documentation/arkit/arfaceanchor/lookatpoint) estimate. Research on [PRL and video calibration](https://pmc.ncbi.nlm.nih.gov/articles/PMC5714047/), [simulated image remapping](https://pmc.ncbi.nlm.nih.gov/articles/PMC5830989/), and [stability limits](https://pmc.ncbi.nlm.nih.gov/articles/PMC5381883/) informs the experiment; simulated results do not establish patient efficacy.
+Future assistive benefit requires separate user and clinical validation, including comparison with ordinary magnification and independently measured vision mapping. No low-vision participant, clinician partnership or startup validation is confirmed. The present scope is the phone demonstration, not wearable hardware or medical treatment.
