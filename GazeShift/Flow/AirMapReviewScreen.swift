@@ -176,7 +176,8 @@ final class AirTraceModel: ObservableObject {
             guard validateEligibility(), var current = flow else { return }
             current.recordGaze(frame: FlowAdapters.frameKey(identity),
                                observation: FlowAdapters.gazeObservation(eyes, identity: identity),
-                               calibration: currentGaze?().calibration, now: now)
+                               calibration: currentGaze?().calibration, now: now,
+                               ignoreGazePosition: allowUnvalidatedGaze)
             flow = current
         case let .hand(result, identity, mode):
             guard let current = flow, identity.generation >= current.session.captureGeneration else { return }
