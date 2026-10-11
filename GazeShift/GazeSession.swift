@@ -318,6 +318,20 @@ struct GazeSession {
         return calibration.livePrediction(observation: latestObservation, now: now, geometry: geometry)
     }
 
+    /// Unvalidated gaze demo ONLY. Same phase, capture, scene-freshness and eye-quality rules as `marker`,
+    /// but a finite off-screen prediction is pinned to the nearest view edge instead of hidden, so an
+    /// inaccurate fit still drives the demo. Blinks, lost eyes and stale frames still return nil.
+    func clampedDemoMarker(at now: Double) -> ScreenPoint? {
+        guard phase == .provisional || phase == .evaluated, displayReady,
+              latestScene?.isFresh(at: now) == true, let calibration, let geometry,
+              GazeQuality.rejectionReason(observation: latestObservation, now: now) == nil,
+              let features = latestObservation?.features,
+              let prediction = try? calibration.predict(features: features, geometry: geometry),
+              prediction.isFinite else { return nil }
+        return ScreenPoint(x: min(max(prediction.x, 0), geometry.width),
+                           y: min(max(prediction.y, 0), geometry.height))
+    }
+
     func displayState(at now: Double) -> GazeDisplayState {
         guard let calibration, let geometry else { return .uncalibrated }
         guard latestScene?.isFresh(at: now) == true else { return .sceneUnavailable }
