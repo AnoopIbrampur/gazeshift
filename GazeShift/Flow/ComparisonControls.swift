@@ -32,6 +32,10 @@ struct ComparisonControls: View {
                 Text(label).font(.caption.weight(.semibold)).foregroundStyle(.orange)
                     .accessibilityIdentifier("simulationLabel")
             }
+            if mode == .comparison(.simulatedBlur) || mode == .comparison(.simulatedBlurPlusCopy) {
+                Text(CompositionPlan.simulationContextText).font(.caption2).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("simulationContext")
+            }
         }
     }
 }

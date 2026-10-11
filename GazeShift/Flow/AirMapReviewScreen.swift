@@ -35,7 +35,7 @@ final class AirTraceModel: ObservableObject {
     }
 
     func begin(gaze: GazeSession, generation: UInt64) {
-        guard Self.isEligible(gaze), currentGaze.map({ Self.isEligible($0()) }) == true,
+        guard isEligible(gaze), currentGaze.map({ isEligible($0()) }) == true,
               let geometry = gaze.geometry else { return }
         reviewedRegion = nil
         patchOffset = nil
@@ -88,7 +88,7 @@ final class AirTraceModel: ObservableObject {
     /// Only the explicit front→rear selection may retain the accepted front provenance.
     /// shortcut: this is pending provenance only; activate a rear region in the later validated P3 handoff.
     func prepareForRearSelection() {
-        guard let region = reviewedRegion, let gaze = currentGaze?(), Self.isEligible(gaze),
+        guard let region = reviewedRegion, let gaze = currentGaze?(), isEligible(gaze),
               gaze.geometry == region.displayGeometry else { interrupt(); return }
         flow = nil
         pendingRearReset = true
@@ -111,20 +111,26 @@ final class AirTraceModel: ObservableObject {
         patchOffset = ScreenPoint(x: current.x + dx, y: current.y + dy)
     }
 
-    private static func isEligible(_ gaze: GazeSession) -> Bool {
+    /// Team-approved "Unvalidated gaze demo": accept the provisional fit instead of a passed report.
+    /// Turning it off re-checks immediately, so active strokes and regions fail closed.
+    var allowUnvalidatedGaze = false {
+        didSet { if oldValue, !allowUnvalidatedGaze { validateEligibility() } }
+    }
+
+    private func isEligible(_ gaze: GazeSession) -> Bool {
         !gaze.isRunning && gaze.geometry?.mode == .frontSetup
             && gaze.calibration?.geometry == gaze.geometry && gaze.calibration != nil
-            && gaze.report?.passesCompleteGate == true
+            && (gaze.report?.passesCompleteGate == true || allowUnvalidatedGaze)
     }
 
     @discardableResult
     private func validateEligibility() -> Bool {
         guard let current = flow else {
             if reviewedRegion != nil, !pendingRearReset, !retainedInRear,
-               currentGaze.map({ Self.isEligible($0()) }) != true { interrupt() }
+               currentGaze.map({ isEligible($0()) }) != true { interrupt() }
             return false
         }
-        guard let gaze = currentGaze?(), Self.isEligible(gaze), gaze.geometry == current.geometry else {
+        guard let gaze = currentGaze?(), isEligible(gaze), gaze.geometry == current.geometry else {
             interrupt()
             return false
         }

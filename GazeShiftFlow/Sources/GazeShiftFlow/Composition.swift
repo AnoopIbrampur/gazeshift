@@ -44,6 +44,8 @@ public struct CompositionPlan: Equatable, Sendable {
 
     public static let simulationLabelText = "Simulated blur — demonstration only"
     public static let trackingUnavailableText = "Tracking unavailable — original view"
+    /// Context shown with any simulated blur: what it approximates, and what it is not.
+    public static let simulationContextText = "Approximates a central blind spot (as in conditions like macular degeneration) using your hand-traced region. Not a medical simulation of any person's vision."
 
     public var isOriginalOnly: Bool { copy == nil && blur == nil }
 }

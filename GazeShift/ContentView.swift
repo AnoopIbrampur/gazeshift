@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import GazeShiftCore
+import GazeShiftFlow
 
 // Progress, controls and reports cannot resize or scroll the measured viewport.
 enum ScreenStyle {
@@ -25,6 +26,12 @@ struct ContentView: View {
     @StateObject private var capture = CaptureModel()
     @State private var gaze = GazeSession()
     @StateObject private var airTrace = AirTraceModel()
+    /// Simulation starts off: normal Live (copy only, never blur).
+    @State private var viewMode: ViewMode = .live
+    @State private var compositeFailure: String?
+    /// Team-approved demo override: use the provisional (failed or untested) calibration for the air map
+    /// and simulation, with a persistent warning. Off by default; never counts as validated evidence.
+    @State private var unvalidatedDemo = false
     @State private var viewportFrame: CGRect = .zero
     @State private var showReferences = true
     @State private var now = ProcessInfo.processInfo.systemUptime
@@ -62,7 +69,9 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
                         GazeCalibrationControls(session: $gaze, showReferences: $showReferences, captureReady: snapshot.status == .ready)
                         Divider()
+                        unvalidatedDemoToggle
                         AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
+                        if airTrace.reviewedRegion != nil { comparisonSection }
                         Divider()
                         diagnostics
                         HStack {
@@ -79,6 +88,7 @@ struct ContentView: View {
         }
         .background(ScreenStyle.background.ignoresSafeArea())
         .onAppear { airTrace.attach(events: capture.events) { gaze } }
+        .onChange(of: unvalidatedDemo) { _, on in airTrace.allowUnvalidatedGaze = on }
         .onChange(of: snapshot.sequence) { _, _ in acceptCapture() }
         .onChange(of: scenePhase) { _, phase in if phase == .background { stop() } }
         .onReceive(timer) { _ in
@@ -112,7 +122,8 @@ struct ContentView: View {
         GeometryReader { geometry in
             ZStack {
                 ScreenStyle.surface
-                CameraView(packet: snapshot.renderPacket, onFailure: capture.rendererFailed)
+                CameraView(packet: snapshot.renderPacket, onFailure: capture.rendererFailed,
+                           composite: compositeUniforms, onCompositeFailure: { compositeFailure = $0 })
                 if snapshot.renderPacket == nil {
                     VStack(spacing: ScreenStyle.spacing) {
                         Image(systemName: "camera").font(.largeTitle)
@@ -127,6 +138,18 @@ struct ContentView: View {
                         .position(x: hand.thumbTip.x * geometry.size.width, y: hand.thumbTip.y * geometry.size.height)
                 }
                 if let measured = gaze.geometry { AirMapOverlay(model: airTrace, geometry: measured) }
+                if let composition, compositeFailure == nil { compositionOutline(composition.plan) }
+                if unvalidatedDemo {
+                    VStack {
+                        Text(Self.unvalidatedBanner)
+                            .font(.caption2.weight(.bold)).foregroundStyle(.black)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.orange, in: Capsule())
+                            .padding(.top, 6)
+                        Spacer()
+                    }
+                    .accessibilityIdentifier("unvalidatedGazeBanner")
+                }
                 if showReferences, gaze.calibration != nil, !gaze.isRunning {
                     ForEach(HeldOutTarget.allCases, id: \.rawValue) { reference in
                         RoundedRectangle(cornerRadius: 3).stroke(.white, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
@@ -213,9 +236,104 @@ struct ContentView: View {
         guard snapshot.status == .ready else { return "Waiting for live front camera and eyes" }
         guard !gaze.isRunning else { return "Finish the calibration step first" }
         guard gaze.calibration != nil, gaze.geometry != nil else { return "Calibrate first" }
-        guard gaze.report?.passesCompleteGate == true else { return "Needs a passed held-out test and eye-only check" }
+        guard unvalidatedDemo || gaze.report?.passesCompleteGate == true else {
+            return "Needs a passed held-out test and eye-only check (or turn on Unvalidated gaze demo)"
+        }
         return nil
     }
+    // MARK: ANO-10/11 composition
+
+    /// The reviewed region in the current measured geometry, if it may be used here.
+    private var currentRegion: ReviewedRegion? {
+        guard let geometry = gaze.geometry, let accepted = airTrace.reviewedRegion else { return nil }
+        if accepted.displayGeometry == geometry { return accepted }
+        return try? accepted.retainedForModeTransition(to: geometry)
+    }
+
+    /// Recomputed every frame from calibrated live gaze; nothing adaptive without a passed report.
+    private var composition: (plan: CompositionPlan, geometry: RenderGeometry)? {
+        guard let geometry = gaze.geometry, airTrace.reviewedRegion != nil else { return nil }
+        let sceneHealthy = snapshot.renderPacket?.identity.isFresh(at: now) == true
+        let validated = gaze.report?.passesCompleteGate == true
+        let allowed = validated || unvalidatedDemo
+        let liveGaze = sceneHealthy && allowed ? gaze.marker(at: now) : nil
+        // Demo override still uses the MEASURED p90 as the copy safety gap; it is only treated as
+        // acceptable because the operator turned the override on. Without a report there is no copy.
+        let margin = gaze.report.flatMap { report in
+            report.overallErrors.map { LivePlacementMargin(p90ErrorPoints: $0.p90Points, geometry: geometry,
+                                                           validated: report.passesCompleteGate || unvalidatedDemo) }
+        }
+        let plan = CompositionPlanner.plan(mode: viewMode, region: currentRegion, gaze: liveGaze, geometry: geometry,
+                                           userOffset: airTrace.patchOffset ?? ScreenPoint(x: .nan, y: .nan),
+                                           liveMargin: margin,
+                                           cameraSamplingBounds: ScreenRect(x: 0, y: 0, width: geometry.width, height: geometry.height))
+        return (plan, geometry)
+    }
+
+    /// GPU layers only when something adaptive is drawn and the simulation shader loaded.
+    private var compositeUniforms: CompositeUniformValues.GPU? {
+        guard compositeFailure == nil, let composition, !composition.plan.isOriginalOnly else { return nil }
+        return CompositeUniformValues(plan: composition.plan, geometry: composition.geometry).gpu
+    }
+
+    /// Green outline of the simulated blind region; dashed white box where the copy lands.
+    @ViewBuilder private func compositionOutline(_ plan: CompositionPlan) -> some View {
+        if let blur = plan.blur {
+            Ellipse().stroke(Color.green, lineWidth: 3)
+                .frame(width: 2 * blur.radii.x, height: 2 * blur.radii.y)
+                .position(x: blur.center.x, y: blur.center.y)
+                .accessibilityIdentifier("simulatedRegionOutline")
+        }
+        if let copy = plan.copy {
+            Rectangle().stroke(Color.white.opacity(0.8), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                .frame(width: copy.destination.width, height: copy.destination.height)
+                .position(x: copy.destination.x + copy.destination.width / 2, y: copy.destination.y + copy.destination.height / 2)
+                .accessibilityIdentifier("copyDestinationOutline")
+        }
+    }
+
+    static let unvalidatedBanner = "UNVALIDATED GAZE — accuracy not verified"
+
+    private var unvalidatedDemoToggle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Unvalidated gaze demo", isOn: $unvalidatedDemo)
+                .accessibilityIdentifier("unvalidatedDemoToggle")
+            Text(unvalidatedDemo
+                 ? "ON: air map and simulation use the provisional calibration even though its accuracy test did not pass. For showing the idea only — not evidence."
+                 : "Off: air map and simulation wait for a passed calibration report.")
+                .font(.caption).foregroundStyle(unvalidatedDemo ? Color.orange : Color.secondary)
+        }
+    }
+
+    @ViewBuilder private var comparisonSection: some View {
+        Divider()
+        if let composition {
+            ComparisonControls(mode: $viewMode, plan: composition.plan)
+        }
+        ForEach(compositionNotes, id: \.self) { note in
+            Text(note).font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    /// Plain reasons the view stays original, so a missing blur is never silent.
+    private var compositionNotes: [String] {
+        var notes: [String] = []
+        if let compositeFailure { notes.append("Simulation unavailable — \(compositeFailure)") }
+        if airTrace.reviewedRegion != nil, gaze.geometry != nil, currentRegion == nil {
+            notes.append("Region not usable in this camera mode yet (front→rear carry-over pending, ANO-10)")
+        }
+        if gaze.report?.passesCompleteGate != true, !unvalidatedDemo {
+            notes.append("Effects need a passed calibration report in this mode")
+        }
+        if unvalidatedDemo, gaze.report?.overallErrors == nil, viewMode != .comparison(.simulatedBlur) {
+            notes.append("Copy needs a held-out test result for its safety gap — run Test first")
+        }
+        if airTrace.patchOffset == nil, viewMode != .comparison(.simulatedBlur), viewMode != .comparison(.original) {
+            notes.append("Choose a copy offset in AIR MAP for copy modes")
+        }
+        return notes
+    }
+
     private func startAirMap() {
         guard airMapBlocker == nil else { return }
         airTrace.begin(gaze: gaze, generation: snapshot.generation)
