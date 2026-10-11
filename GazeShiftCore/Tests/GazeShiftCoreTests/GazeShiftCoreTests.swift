@@ -260,9 +260,10 @@ final class GazeShiftCoreTests: XCTestCase {
         let features = try [(0.0, 0.0), (1, -1), (2, 1), (3, -2)].map {
             try EyeFeatures(horizontal: $0.0, vertical: $0.1)
         }
-        for (target, dx, dy) in [(HeldOutTarget.upperLeft, 185.0, 65.0), (.lowerRight, 35, -135)] {
+        for (target, count, dx, dy) in [(HeldOutTarget.upperLeft, 4, 185.0, 65.0), (.lowerRight, 4, 35, -135),
+                                      (.lowerRight, 3, -35, -100)] {
             var window = try HeldOutWindow(target: target, pass: 1, presentedAt: 0, geometry: g)
-            for (slot, feature) in features.enumerated() {
+            for (slot, feature) in features.prefix(count).enumerated() {
                 let time = 0.501 + Double(slot) * 0.05
                 try window.record(slot: slot, now: time, observation: observation(feature, time: time), calibration: model)
             }
@@ -270,15 +271,24 @@ final class GazeShiftCoreTests: XCTestCase {
             try window.record(slot: 4, now: 0.701,
                               observation: observation(rejected, time: 0.701, blink: 0.8), calibration: model)
             let result = window.finish()
-            XCTAssertEqual(result.validPredictions, 4, "Finite off-screen predictions remain accepted")
+            XCTAssertEqual(result.validPredictions, count, "Finite off-screen predictions remain accepted")
+            XCTAssertEqual(result.receivedUniqueSamples, count + 1)
+            XCTAssertEqual(result.rejectedSlots, 20 - count)
             XCTAssertEqual(result.rejectionCounts[.closedEyes], 1)
             XCTAssertEqual(try XCTUnwrap(result.medianDXPoints), dx, accuracy: 0.001)
             XCTAssertEqual(try XCTUnwrap(result.medianDYPoints), dy, accuracy: 0.001)
             let summary = try XCTUnwrap(result.featureSummary)
-            XCTAssertEqual(summary.horizontalMean, 1.5, accuracy: 1e-12)
-            XCTAssertEqual(summary.verticalMean, -0.5, accuracy: 1e-12)
-            XCTAssertEqual(summary.horizontalPopulationSD, 1.118033988749895, accuracy: 1e-12)
-            XCTAssertEqual(summary.verticalPopulationSD, 1.118033988749895, accuracy: 1e-12)
+            if count == 4 {
+                XCTAssertEqual(summary.horizontalMean, 1.5, accuracy: 1e-12)
+                XCTAssertEqual(summary.verticalMean, -0.5, accuracy: 1e-12)
+                XCTAssertEqual(summary.horizontalPopulationSD, 1.118033988749895, accuracy: 1e-12)
+                XCTAssertEqual(summary.verticalPopulationSD, 1.118033988749895, accuracy: 1e-12)
+            } else {
+                XCTAssertEqual(summary.horizontalMean, 1, accuracy: 1e-12)
+                XCTAssertEqual(summary.verticalMean, 0, accuracy: 1e-12)
+                XCTAssertEqual(summary.horizontalPopulationSD, 0.816496580927726, accuracy: 1e-12)
+                XCTAssertEqual(summary.verticalPopulationSD, 0.816496580927726, accuracy: 1e-12)
+            }
         }
     }
 
