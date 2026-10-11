@@ -61,6 +61,23 @@ public enum PlacementPlanner {
         }
         guard let cameraSamplingBounds, validRectangle(cameraSamplingBounds) else { return .rejected(.invalidSamplingBounds) }
         guard let ellipse = try? region.displayEllipse(gaze: gaze, geometry: geometry) else { return .rejected(.regionGeometryChanged) }
+        return plan(ellipse: ellipse, geometry: geometry, userOffset: userOffset,
+                    gap: liveMargin.p90ErrorPoints * PlacementDefaults.liveP90SafetyGapMultiplier,
+                    cameraSamplingBounds: cameraSamplingBounds)
+    }
+
+    /// Display-fixed regions have no tracking-error margin; overlap and bounds checks still apply.
+    public static func planScreenFixed(region: ReviewedRegion, geometry: RenderGeometry,
+                                       userOffset: ScreenPoint, cameraSamplingBounds: ScreenRect?) -> PlacementResult {
+        guard userOffset.x.isFinite, userOffset.y.isFinite else { return .rejected(.invalidOffset) }
+        guard let cameraSamplingBounds, validRectangle(cameraSamplingBounds) else { return .rejected(.invalidSamplingBounds) }
+        guard let ellipse = try? region.screenFixedEllipse(geometry: geometry) else { return .rejected(.regionGeometryChanged) }
+        return plan(ellipse: ellipse, geometry: geometry, userOffset: userOffset, gap: 0,
+                    cameraSamplingBounds: cameraSamplingBounds)
+    }
+
+    private static func plan(ellipse: DisplayEllipse, geometry: RenderGeometry, userOffset: ScreenPoint,
+                             gap: Double, cameraSamplingBounds: ScreenRect) -> PlacementResult {
         let source = ScreenRect(x: ellipse.center.x - ellipse.radii.x,
                                 y: ellipse.center.y - ellipse.radii.y,
                                 width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y)
@@ -69,7 +86,6 @@ public enum PlacementPlanner {
         let viewport = ScreenRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
         guard contains(viewport, source), contains(cameraSamplingBounds, source) else { return .rejected(.sourceOutsideBounds) }
         guard contains(viewport, destination), contains(cameraSamplingBounds, destination) else { return .rejected(.destinationOutsideBounds) }
-        let gap = liveMargin.p90ErrorPoints * PlacementDefaults.liveP90SafetyGapMultiplier
         // Conservative simplification: use the ellipse's expanded bounding box; reject edge touching too.
         guard !overlapsExpandedSource(destination, source: source, gap: gap) else { return .rejected(.destinationOverlapsRegion) }
         return .accepted(PatchPlacement(ellipse: ellipse, source: source, destination: destination,

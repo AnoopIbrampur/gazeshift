@@ -161,12 +161,13 @@ final class CaptureController: NSObject, ARSessionDelegate {
         if mode == .setupFront {
             guard support.frontFace else { status = .unsupported("Front face tracking unsupported on this device"); emit(); return }
             let front = ARFaceTrackingConfiguration()
+            // ARKit remains only the front-camera provider; face/eye anchors are never consumed.
             front.isLightEstimationEnabled = false
             configuration = front
         } else {
-            guard support.world && support.rearFace else { status = .unsupported("Rear scene + eye tracking unsupported on this device"); emit(); return }
+            guard support.world else { status = .unsupported("Rear scene unsupported on this device"); emit(); return }
             let rear = ARWorldTrackingConfiguration()
-            rear.userFaceTrackingEnabled = true
+            rear.userFaceTrackingEnabled = false
             rear.isLightEstimationEnabled = false
             configuration = rear
         }
@@ -247,6 +248,13 @@ final class CaptureController: NSObject, ARSessionDelegate {
         }
         guard freshness.acceptScene(identity, now: now) else { return }
         packet = RenderPacket(identity: identity, image: frame.capturedImage, geometry: geometry, mode: mode)
+        publishEvent(.source(identity: identity, mode: mode))
+        frameDiagnostics = CaptureFrameDiagnostics(identity: identity, sourceFrameCount: sourceFrameCount,
+                                                    configuredFPS: configuredFPS, thermalState: thermalStateText)
+        status = .ready
+        if mode == .setupFront { handTracker.submit(HandWork(identity: identity, image: frame.capturedImage, geometry: geometry)) }
+        // Dormant eye pipeline retained for later separately validated work. The manual build never reads it.
+        #if false
         // Read anchors from this exact frame. No cached anchors get a fresh timestamp.
         let face = frame.anchors.first { $0 is ARFaceAnchor } as? ARFaceAnchor
         let currentEyes = face.map(Self.eyeObservation)
@@ -261,14 +269,17 @@ final class CaptureController: NSObject, ARSessionDelegate {
         eyeIdentity = eyes == nil ? nil : identity
         status = freshness.trackingAvailable ? .ready : (freshness.recoveryCount > 0 ? .recovering(freshness.recoveryCount) : .trackingUnavailable)
         if mode == .setupFront { handTracker.submit(HandWork(identity: identity, image: frame.capturedImage, geometry: geometry)) }
+        #endif
         emit()
     }
 
+    #if false
     private static func eyeObservation(_ face: ARFaceAnchor) -> EyeObservation {
         let left = face.leftEyeTransform.columns.3
         let right = face.rightEyeTransform.columns.3
         return EyeObservation(lookAtPoint: face.lookAtPoint, leftEyeTranslation: SIMD3(left.x, left.y, left.z), rightEyeTranslation: SIMD3(right.x, right.y, right.z), leftBlink: face.blendShapes[.eyeBlinkLeft]?.floatValue, rightBlink: face.blendShapes[.eyeBlinkRight]?.floatValue, isTracked: face.isTracked)
     }
+    #endif
 
     private var thermalStateText: String {
         switch ProcessInfo.processInfo.thermalState {

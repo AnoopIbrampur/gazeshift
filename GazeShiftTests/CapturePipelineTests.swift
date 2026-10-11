@@ -22,6 +22,22 @@ final class CompositeShaderTests: XCTestCase {
 }
 
 final class CapturePipelineTests: XCTestCase {
+    // Break caught: a fresh camera frame is demoted solely because eye extraction is disabled.
+    func testFreshCameraRemainsReadyWithoutEyes() throws {
+        var image: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 2, 2, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &image)
+        let id = identity(1)
+        let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 400),
+                                                     displayTransform: .identity, orientation: .up, mirrored: false))
+        let packet = RenderPacket(identity: id, image: try XCTUnwrap(image), geometry: geometry, mode: .setupFront)
+        let snapshot = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready,
+                                       support: nil, renderPacket: packet, eyes: nil, eyeIdentity: nil,
+                                       hand: nil, handMessage: "Hand unavailable")
+        XCTAssertEqual(snapshot.forDisplay(at: 10.1).status, .ready)
+        let stale = snapshot.forDisplay(at: 10.251)
+        XCTAssertEqual(stale.status, .sceneUnavailable)
+        XCTAssertNil(stale.renderPacket)
+    }
     // Break caught: world-space face pose, or the wrong multiplication order, is reported as camera-relative.
     func testFaceCameraPoseUsesSameFrameInverseCameraTimesFaceAndRejectsInvalidMatrices() throws {
         let camera = simd_float4x4(columns: (SIMD4(0, 1, 0, 0), SIMD4(-1, 0, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(1, 2, 3, 1)))

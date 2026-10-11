@@ -21,6 +21,8 @@ enum ScreenStyle {
     static let gazeControlsAnchor = "gazeControls"
 }
 
+// Dormant eye-driven screen retained; no gaze session/calibration is instantiated in the manual build.
+#if false
 struct ContentView: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
@@ -406,4 +408,177 @@ struct ContentView: View {
     }
     private func vector(_ value: SIMD3<Float>) -> String { String(format: "%.3f, %.3f, %.3f", value.x, value.y, value.z) }
     private func blink(_ value: Float?) -> String { value.map { String(format: "%.2f", $0) } ?? "unavailable" }
+}
+
+#endif
+
+struct ContentView: View {
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var capture = CaptureModel()
+    @StateObject private var airTrace = AirTraceModel()
+    @State private var viewMode: ViewMode = .live
+    @State private var compositeFailure: String?
+    @State private var viewportFrame: CGRect = .zero
+    @State private var now = ProcessInfo.processInfo.systemUptime
+    private let timer = Timer.publish(every: CaptureLimits.watchdogInterval, on: .main, in: .common).autoconnect()
+    private var snapshot: CaptureSnapshot { capture.snapshot.forDisplay(at: now) }
+    private var geometry: RenderGeometry? {
+        try? RenderGeometry(width: Double(viewportFrame.width), height: Double(viewportFrame.height),
+                            scale: Double(displayScale), orientation: .portrait,
+                            mode: snapshot.mode == .setupFront ? .frontSetup : .rearLive,
+                            viewingSetupID: "viewport-origin-\(viewportFrame.origin.x)-\(viewportFrame.origin.y)")
+    }
+
+    var body: some View {
+        GeometryReader { page in
+            VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("GAZESHIFT / AIR TRACE").font(.caption.weight(.semibold)).foregroundStyle(ScreenStyle.accent)
+                    Text("Draw your demonstration region").font(.title3.weight(.semibold))
+                    Text("Eye tracking disabled · screen-fixed approximation.")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                        .accessibilityIdentifier("eyeTrackingDisabledBanner")
+                }
+                Text(snapshot.status.text).font(.subheadline.weight(.medium)).foregroundStyle(ScreenStyle.accent)
+                    .frame(height: ScreenStyle.captureStatusHeight, alignment: .leading)
+                    .accessibilityIdentifier("captureStatus")
+                HStack {
+                    Button("Front setup") { start(.setupFront) }.accessibilityIdentifier("frontSetup")
+                    Button("Rear scene") { start(.liveRear) }.accessibilityIdentifier("rearScene")
+                    Spacer()
+                }.buttonStyle(.borderedProminent).tint(ScreenStyle.surface)
+                viewport.frame(height: max(ScreenStyle.minimumViewportHeight,
+                    min(ScreenStyle.maximumViewportHeight, page.size.height * ScreenStyle.viewportHeightFraction)))
+                HStack {
+                    Text("\(Int(viewportFrame.width)) × \(Int(viewportFrame.height)) pt · portrait")
+                    Spacer()
+                    Text(snapshot.mode == .setupFront ? "FRONT" : "REAR")
+                }.font(.caption.monospaced()).foregroundStyle(ScreenStyle.secondary)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+                        AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
+                        if airTrace.reviewedRegion != nil {
+                            Divider()
+                            if let composition { ComparisonControls(mode: $viewMode, plan: composition.plan) }
+                            Text("The hand-drawn ellipse stays at fixed screen coordinates. Eye movement does not move it.")
+                                .font(.caption).foregroundStyle(.orange)
+                            Text("The copy duplicates original pixels and covers destination content. Choose an offset that fits the view without overlapping the region.")
+                                .font(.caption).foregroundStyle(ScreenStyle.secondary)
+                        }
+                        if let compositeFailure {
+                            Text("Simulation unavailable — \(compositeFailure)").font(.caption).foregroundStyle(.orange)
+                        }
+                        Divider()
+                        Text(snapshot.handMessage).font(.caption).foregroundStyle(ScreenStyle.secondary)
+                        Text(snapshot.support?.text ?? "Camera support is checked when capture starts")
+                            .font(.caption2).foregroundStyle(ScreenStyle.secondary)
+                        HStack {
+                            Button("Retry") { airTrace.interrupt(); capture.retry() }.accessibilityIdentifier("retryCapture")
+                            Button("Stop") { stop() }.accessibilityIdentifier("stopCapture")
+                            Spacer()
+                            Text("AIR-TRACE / \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")")
+                                .font(.caption2.monospaced()).foregroundStyle(ScreenStyle.secondary)
+                        }.buttonStyle(.bordered)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.padding(ScreenStyle.pagePadding)
+        }
+        .background(ScreenStyle.background.ignoresSafeArea())
+        .onAppear { airTrace.attach(events: capture.events) }
+        .onChange(of: airTrace.reviewedRegion != nil) { _, accepted in
+            if accepted { viewMode = .comparison(.simulatedBlur) }
+        }
+        .onChange(of: scenePhase) { _, phase in if phase == .background { stop() } }
+        .onReceive(timer) { _ in
+            now = ProcessInfo.processInfo.systemUptime
+            airTrace.tick(now: now, geometry: geometry)
+        }
+    }
+
+    private var viewport: some View {
+        GeometryReader { measured in
+            ZStack {
+                ScreenStyle.surface
+                CameraView(packet: snapshot.renderPacket, onFailure: capture.rendererFailed,
+                           composite: compositeUniforms, onCompositeFailure: { compositeFailure = $0 })
+                if snapshot.renderPacket == nil {
+                    Text(snapshot.status.text).font(.subheadline).padding().foregroundStyle(ScreenStyle.secondary)
+                }
+                if snapshot.mode == .setupFront, let hand = snapshot.hand {
+                    Circle().fill(.yellow).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
+                        .position(x: hand.indexTip.x * measured.size.width, y: hand.indexTip.y * measured.size.height)
+                    Circle().stroke(.yellow, lineWidth: 2).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
+                        .position(x: hand.thumbTip.x * measured.size.width, y: hand.thumbTip.y * measured.size.height)
+                }
+                if let geometry { AirMapOverlay(model: airTrace, geometry: geometry) }
+                if let composition, compositeFailure == nil { compositionOutline(composition.plan) }
+            }
+            .allowsHitTesting(false).clipped()
+            .overlay(Rectangle().stroke(ScreenStyle.secondary.opacity(0.3), lineWidth: 1))
+            .onAppear { updateLayout(measured.frame(in: .global)) }
+            .onChange(of: measured.frame(in: .global)) { _, frame in updateLayout(frame) }
+            .onChange(of: displayScale) { _, _ in updateLayout(measured.frame(in: .global)) }
+        }.accessibilityIdentifier("measuredViewport")
+    }
+
+    private var currentRegion: ReviewedRegion? {
+        guard let geometry, let region = airTrace.reviewedRegion else { return nil }
+        return region.displayGeometry == geometry ? region : airTrace.rearRegion(for: geometry)
+    }
+
+    private var composition: (plan: CompositionPlan, geometry: RenderGeometry)? {
+        guard let geometry, airTrace.reviewedRegion != nil else { return nil }
+        let plan = CompositionPlanner.planScreenFixed(mode: viewMode, region: currentRegion,
+            sourceAvailable: snapshot.renderPacket != nil, geometry: geometry,
+            userOffset: airTrace.patchOffset ?? ScreenPoint(x: .nan, y: .nan),
+            cameraSamplingBounds: ScreenRect(x: 0, y: 0, width: geometry.width, height: geometry.height))
+        return (plan, geometry)
+    }
+
+    private var compositeUniforms: CompositeUniformValues.GPU? {
+        guard compositeFailure == nil, let composition, !composition.plan.isOriginalOnly else { return nil }
+        return CompositeUniformValues(plan: composition.plan, geometry: composition.geometry).gpu
+    }
+
+    @ViewBuilder private func compositionOutline(_ plan: CompositionPlan) -> some View {
+        if let blur = plan.blur {
+            Ellipse().stroke(.green, lineWidth: 3)
+                .frame(width: 2 * blur.radii.x, height: 2 * blur.radii.y)
+                .position(x: blur.center.x, y: blur.center.y)
+                .accessibilityIdentifier("simulatedRegionOutline")
+        }
+        if let copy = plan.copy {
+            Rectangle().stroke(.white.opacity(0.8), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                .frame(width: copy.destination.width, height: copy.destination.height)
+                .position(x: copy.destination.x + copy.destination.width / 2, y: copy.destination.y + copy.destination.height / 2)
+                .accessibilityIdentifier("copyDestinationOutline")
+        }
+    }
+
+    private var airMapBlocker: String? {
+        guard snapshot.mode == .setupFront else { return "Trace with Front setup, then switch to Rear scene" }
+        guard snapshot.status == .ready, snapshot.renderPacket != nil else { return "Waiting for a live front camera" }
+        guard geometry != nil else { return "Waiting for the measured display" }
+        return nil
+    }
+
+    private func updateLayout(_ frame: CGRect) {
+        airTrace.layout(frame, scale: displayScale)
+        viewportFrame = frame
+        capture.layout(frame.size, scale: displayScale)
+    }
+
+    private func startAirMap() {
+        guard airMapBlocker == nil, let geometry else { return }
+        airTrace.begin(geometry: geometry, generation: snapshot.generation)
+    }
+
+    private func start(_ mode: CaptureMode) {
+        if mode == .liveRear { airTrace.prepareForRearSelection(geometry: geometry) }
+        else { airTrace.interrupt() }
+        capture.start(mode)
+    }
+
+    private func stop() { airTrace.interrupt(); capture.stop() }
 }

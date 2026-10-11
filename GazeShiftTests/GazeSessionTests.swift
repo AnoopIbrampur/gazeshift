@@ -2,6 +2,7 @@ import XCTest
 import Combine
 import CoreVideo
 import GazeShiftCore
+import GazeShiftFlow
 import simd
 @testable import GazeShift
 
@@ -404,6 +405,8 @@ final class GazeSessionTests: XCTestCase {
     }
 }
 
+// Dormant eye-driven adapter fixtures; core gaze and calibration tests above still run offline.
+#if false
 /// Synthetic adapter fixtures exercise the actual app model; they do not prove sensor behavior.
 @MainActor
 final class AirTraceModelTests: XCTestCase {
@@ -778,5 +781,100 @@ final class AirTraceModelTests: XCTestCase {
         return CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready, support: nil,
                                renderPacket: packet, eyes: observation, eyeIdentity: identity, hand: nil,
                                handMessage: "fixture", rawEyes: observation, rawEyeIdentity: identity)
+    }
+}
+
+#endif
+
+/// Synthetic hand adapter checks; sensor behavior remains a physical-device verification.
+@MainActor
+final class ManualAirTraceModelTests: XCTestCase {
+    private let events = PassthroughSubject<CaptureEvent, Never>()
+    private func geometry(_ mode: TrackingMode = .frontSetup, setup: String = "fixed-display") throws -> RenderGeometry {
+        try RenderGeometry(width: 300, height: 400, scale: 3, orientation: .portrait, mode: mode, viewingSetupID: setup)
+    }
+    private func model() throws -> AirTraceModel {
+        let model = AirTraceModel()
+        model.attach(events: events)
+        model.layout(CGRect(x: 0, y: 0, width: 300, height: 400), scale: 3)
+        model.begin(geometry: try geometry(), generation: 1)
+        return model
+    }
+    private func frame(_ index: Int, point: CGPoint? = nil, release: Bool = false,
+                       handPresent: Bool = true, confidence: Float = 0.9) {
+        let time = ProcessInfo.processInfo.systemUptime
+        let identity = FrameIdentity(generation: 1, captureTimestamp: 5000 + Double(index), receivedAt: time)
+        let angle = 2 * Double.pi * Double(index % 24) / 24
+        let tip = point ?? CGPoint(x: (120 + 30 * cos(angle)) / 300, y: (140 + 20 * sin(angle)) / 400)
+        let hand = HandObservation(identity: identity, indexTip: tip,
+            thumbTip: CGPoint(x: tip.x + (release ? 60.0 : 1.0) / 300, y: tip.y),
+            indexConfidence: confidence, thumbConfidence: confidence)
+        events.send(.source(identity: identity, mode: .setupFront))
+        events.send(.eyes(nil, identity: identity, mode: .setupFront))
+        events.send(.hand(.success(handPresent ? hand : nil), identity: identity, mode: .setupFront))
+    }
+    private func accepted() throws -> AirTraceModel {
+        let model = try model()
+        for index in 0..<24 { frame(index) }
+        frame(24, release: true)
+        XCTAssertEqual(model.flow?.state, .candidateReady)
+        model.accept()
+        XCTAssertNotNil(model.reviewedRegion)
+        model.nudgeOffset(dx: 100, dy: 150)
+        return model
+    }
+
+    // Break caught: the real app model still demands calibration/eyes before accepting a hand trace.
+    func testHandOnlyAppModelAcceptsWithoutCalibrationOrEyeEvents() throws {
+        let model = try accepted()
+        let ellipse = try XCTUnwrap(model.reviewedRegion).screenFixedEllipse(geometry: geometry())
+        XCTAssertEqual(ellipse.center.x, 120, accuracy: 1e-6)
+        XCTAssertEqual(ellipse.center.y, 140, accuracy: 1e-6)
+    }
+
+    // Break caught: invalid hand data or silence is bridged by the next good callback.
+    func testNilLowConfidenceAndStaleHandClearStrokeWithoutEyeInput() throws {
+        for variant in 0..<3 {
+            let model = try model()
+            frame(0)
+            XCTAssertEqual(model.flow?.state, .tracing)
+            if variant == 2 { model.tick(now: ProcessInfo.processInfo.systemUptime + 0.251, geometry: try geometry()) }
+            else { frame(1, handPresent: variant != 0, confidence: variant == 1 ? 0.1 : 0.9) }
+            if case .invalid = model.flow?.state {} else { XCTFail("Invalid input survived") }
+            XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+            model.end()
+        }
+    }
+
+    // Break caught: Close loses offset edits, or an arbitrary rear reset silently reuses a region.
+    func testRegionAndOffsetOnlySurviveDeliberateSameDisplayRearHandoff() throws {
+        let model = try accepted()
+        model.end()
+        model.nudgeOffset(dx: 20, dy: 0)
+        XCTAssertEqual(model.patchOffset, ScreenPoint(x: 120, y: 150))
+        XCTAssertNil(model.rearRegion(for: try geometry(.rearLive)))
+        model.prepareForRearSelection(geometry: try geometry())
+        events.send(.reset(generation: 2, mode: .liveRear))
+        let rear = try XCTUnwrap(model.rearRegion(for: geometry(.rearLive)))
+        XCTAssertEqual(try rear.screenFixedEllipse(geometry: geometry(.rearLive)).center.x, 120, accuracy: 1e-6)
+        XCTAssertEqual(model.patchOffset, ScreenPoint(x: 120, y: 150))
+        model.nudgeOffset(dx: 20, dy: 0)
+        XCTAssertEqual(model.patchOffset, ScreenPoint(x: 140, y: 150))
+        model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: try geometry(.rearLive, setup: "moved"))
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.patchOffset)
+    }
+
+    // Break caught: Retry/Stop or unsolicited mode changes retain effects from a previous capture run.
+    func testCaptureResetAndLayoutChangesClearAcceptedRegion() throws {
+        for variant in 0..<3 {
+            let model = try accepted()
+            if variant == 0 { events.send(.reset(generation: 2, mode: .liveRear)) }
+            else if variant == 1 { model.layout(CGRect(x: 1, y: 0, width: 300, height: 400), scale: 3) }
+            else { model.interrupt() }
+            XCTAssertNil(model.reviewedRegion)
+            XCTAssertNil(model.patchOffset)
+            model.end()
+        }
     }
 }

@@ -98,6 +98,8 @@ public struct AirTracePairer: Sendable {
 public struct AirTraceFlow: Sendable {
     public private(set) var session: AirTraceSession
     private var pairer = AirTracePairer()
+    private var sourceByFrame: [CaptureFrameKey: Double] = [:]
+    private var sourceArrival: [CaptureFrameKey] = []
 
     public init(session: AirTraceSession) { self.session = session }
 
@@ -105,6 +107,30 @@ public struct AirTraceFlow: Sendable {
     public var rawTrace: [ScreenPoint] { session.rawTrace }
     public var candidate: RegionCandidate? { session.candidate }
     public var geometry: RenderGeometry { session.geometry }
+
+    /// Hand-only input keeps real camera identity/age without manufacturing an eye observation.
+    public mutating func recordSource(frame: CaptureFrameKey, captureTime: Double, now: Double,
+                                      geometry: RenderGeometry) {
+        session.observeSource(captureTimestamp: captureTime, generation: frame.generation, now: now, geometry: geometry)
+        guard state == .ready || state == .tracing, frame.generation == session.captureGeneration else { return }
+        if sourceByFrame.updateValue(captureTime, forKey: frame) == nil { sourceArrival.append(frame) }
+        while sourceArrival.count > AirTracePairer.retainedFrames { sourceByFrame[sourceArrival.removeFirst()] = nil }
+    }
+
+    public mutating func handOnlyResult(_ hand: NormalizedHandInput?, frame: CaptureFrameKey,
+                                        now: Double, geometry: RenderGeometry) {
+        expireInputs(now: now, geometry: geometry)
+        let sourceTime = sourceByFrame.removeValue(forKey: frame)
+        sourceArrival.removeAll { $0 == frame }
+        let sample = hand.flatMap { input -> AirTraceHandSample? in
+            guard input.frame == frame, input.captureTime == sourceTime else { return nil }
+            return AirTraceHandSample(indexTip: AirTracePairer.viewPoint(input.indexTip, geometry),
+                                      thumbTip: AirTracePairer.viewPoint(input.thumbTip, geometry),
+                                      indexConfidence: input.indexConfidence, thumbConfidence: input.thumbConfidence,
+                                      captureTimestamp: input.captureTime, generation: frame.generation)
+        }
+        session.consumeHand(sample, now: now, geometry: geometry)
+    }
 
     /// Call once per ARFrame with that frame's eye observation (nil when ARKit reported no face).
     /// `ignoreGazePosition` is the opt-in Unvalidated gaze demo: eye quality is still enforced, position is not.
@@ -130,7 +156,7 @@ public struct AirTraceFlow: Sendable {
     /// Called by the host watchdog even when neither source nor Vision delivers another event.
     public mutating func expireInputs(now: Double, geometry: RenderGeometry) {
         session.expireInputs(now: now, geometry: geometry)
-        if case .invalid = session.state { pairer.reset() }
+        if case .invalid = session.state { resetInputs() }
     }
 
     /// Min/max bounding ellipse of the pending candidate, for the review screen (ANO-8).
@@ -147,14 +173,20 @@ public struct AirTraceFlow: Sendable {
     public mutating func accept() throws -> ReviewedRegion { try session.acceptCandidate() }
 
     public mutating func redo() {
-        pairer.reset()
+        resetInputs()
         session.redo()
     }
 
     /// Mode switch, pause, layout change or AR re-run: the stroke cannot continue.
     public mutating func interrupt() {
-        pairer.reset()
+        resetInputs()
         session.interrupt()
+    }
+
+    private mutating func resetInputs() {
+        pairer.reset()
+        sourceByFrame.removeAll()
+        sourceArrival.removeAll()
     }
 }
 

@@ -6,10 +6,12 @@ import GazeShiftFlow
 enum AirMapPolicy {
     /// Stationary fixation reference for the demo: the viewport center.
     static let normalizedFixation = ScreenPoint(x: 0.5, y: 0.5)
-    static let eyeStateDescription = "Healthy-user demo · both eyes open · binocular viewing"
+    static let eyeStateDescription = "Eye tracking disabled · screen-fixed approximation"
     static let offsetStep = 20.0
 }
 
+// Dormant eye-driven adapter retained for a future separately validated experiment.
+#if false
 /// Owns one air-trace attempt and the reviewed provenance for a deliberate same-display rear handoff.
 @MainActor
 final class AirTraceModel: ObservableObject {
@@ -191,6 +193,125 @@ final class AirTraceModel: ObservableObject {
     }
 }
 
+#endif
+
+/// Hand-only outline and deliberate same-display front→rear region handoff.
+@MainActor
+final class AirTraceModel: ObservableObject {
+    @Published private(set) var flow: AirTraceFlow?
+    @Published private(set) var reviewedRegion: ReviewedRegion?
+    @Published var patchOffset: ScreenPoint?
+    private var subscription: AnyCancellable?
+    private var viewportFrame: CGRect?
+    private var displayScale: CGFloat?
+    private var pendingRearReset = false
+    private var retainedInRear = false
+    private var regionGeneration: UInt64?
+
+    func attach<P: Publisher>(events: P) where P.Output == CaptureEvent, P.Failure == Never {
+        guard subscription == nil else { return }
+        subscription = events.sink { [weak self] event in
+            MainActor.assumeIsolated { self?.receive(event) }
+        }
+    }
+
+    func begin(geometry: RenderGeometry, generation: UInt64) {
+        guard geometry.mode == .frontSetup else { return }
+        interrupt()
+        regionGeneration = generation
+        flow = (try? AirTraceSession(handOnlyGeometry: geometry, captureGeneration: generation)).map(AirTraceFlow.init(session:))
+    }
+
+    func end() { flow = nil }
+
+    func layout(_ frame: CGRect, scale: CGFloat) {
+        if let viewportFrame, let displayScale, viewportFrame != frame || displayScale != scale { interrupt() }
+        viewportFrame = frame
+        displayScale = scale
+    }
+
+    func tick(now: Double, geometry: RenderGeometry?) {
+        if let region = reviewedRegion, let geometry {
+            if region.displayGeometry != geometry, rearRegion(for: geometry) == nil, !pendingRearReset { interrupt() }
+        } else if reviewedRegion != nil { interrupt() }
+        guard var current = flow else { return }
+        let before = current.state
+        current.expireInputs(now: now, geometry: geometry ?? current.geometry)
+        if current.state != before { flow = current }
+    }
+
+    func accept() {
+        guard var current = flow else { return }
+        reviewedRegion = try? current.accept()
+        flow = current
+    }
+
+    func redo() {
+        guard var current = flow else { return }
+        reviewedRegion = nil
+        patchOffset = nil
+        current.redo()
+        flow = current
+    }
+
+    func prepareForRearSelection(geometry: RenderGeometry?) {
+        guard let region = reviewedRegion, geometry == region.displayGeometry,
+              geometry?.mode == .frontSetup else { interrupt(); return }
+        flow = nil
+        pendingRearReset = true
+    }
+
+    func rearRegion(for geometry: RenderGeometry?) -> ReviewedRegion? {
+        guard retainedInRear, let region = reviewedRegion, let geometry else { return nil }
+        return try? region.retainedForModeTransition(to: geometry)
+    }
+
+    func interrupt() {
+        reviewedRegion = nil
+        patchOffset = nil
+        pendingRearReset = false
+        retainedInRear = false
+        regionGeneration = nil
+        if var current = flow { current.interrupt(); flow = current }
+    }
+
+    func nudgeOffset(dx: Double, dy: Double) {
+        let current = patchOffset ?? ScreenPoint(x: 0, y: 0)
+        patchOffset = ScreenPoint(x: current.x + dx, y: current.y + dy)
+    }
+
+    private func receive(_ event: CaptureEvent) {
+        let now = ProcessInfo.processInfo.systemUptime
+        switch event {
+        case let .reset(generation, mode):
+            guard let prior = flow?.session.captureGeneration ?? regionGeneration, generation > prior else { return }
+            if pendingRearReset, mode == .liveRear, reviewedRegion != nil {
+                pendingRearReset = false
+                retainedInRear = true
+                regionGeneration = generation
+            } else { interrupt() }
+        case .eyes:
+            break // Eye tracking is disabled; dormant eye events cannot affect the manual experiment.
+        case let .source(identity, mode):
+            guard var current = currentFlow(identity: identity, mode: mode) else { return }
+            current.recordSource(frame: FlowAdapters.frameKey(identity), captureTime: FlowAdapters.captureTime(identity),
+                                 now: now, geometry: current.geometry)
+            flow = current
+        case let .hand(result, identity, mode):
+            guard var current = currentFlow(identity: identity, mode: mode) else { return }
+            current.handOnlyResult((try? result.get()).map(FlowAdapters.handInput), frame: FlowAdapters.frameKey(identity),
+                                   now: now, geometry: current.geometry)
+            flow = current
+        }
+    }
+
+    private func currentFlow(identity: FrameIdentity, mode: CaptureMode) -> AirTraceFlow? {
+        guard let current = flow, identity.generation >= current.session.captureGeneration else { return nil }
+        guard identity.generation == current.session.captureGeneration, mode == .setupFront else { interrupt(); return nil }
+        return current
+    }
+}
+
 /// Render only over the SAME measured preview used by capture and calibration.
 /// The caller supplies its current full geometry; a stale trace is never scaled into a new viewport.
 struct AirMapOverlay: View {
@@ -208,7 +329,6 @@ struct AirMapOverlay: View {
     }
 
     private func overlay(_ flow: AirTraceFlow) -> some View {
-        let fixation = FlowAdapters.cgPoint(flow.session.fixation)
         return ZStack {
             Path { path in
                 guard let first = flow.rawTrace.first else { return }
@@ -226,11 +346,6 @@ struct AirMapOverlay: View {
                         .stroke(Color.green, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                 }
             }
-            Path { path in
-                path.move(to: CGPoint(x: fixation.x - 10, y: fixation.y)); path.addLine(to: CGPoint(x: fixation.x + 10, y: fixation.y))
-                path.move(to: CGPoint(x: fixation.x, y: fixation.y - 10)); path.addLine(to: CGPoint(x: fixation.x, y: fixation.y + 10))
-            }
-            .stroke(Color.white, lineWidth: 2)
         }
     }
 }
@@ -258,7 +373,7 @@ struct AirMapControls: View {
                     Spacer()
                     Button("Close") { model.end() }.buttonStyle(.bordered)
                 }
-                if flow.candidate != nil || flow.state == .accepted { offsetControls }
+
             } else {
                 Button("Start air map", action: onStart)
                     .buttonStyle(.borderedProminent)
@@ -266,10 +381,11 @@ struct AirMapControls: View {
                     .accessibilityIdentifier("airMapStart")
                 if let startBlocker { Text(startBlocker).font(.caption).foregroundStyle(.secondary) }
                 if model.reviewedRegion != nil {
-                    Text("Accepted front region. Rear effects require the same-display Rear + eyes handoff and a fresh rear calibration.")
+                    Text("Accepted screen-fixed region. Switch to Rear scene to use it over live rear imagery.")
                         .font(.caption)
                 }
             }
+            if model.flow?.candidate != nil || model.reviewedRegion != nil { offsetControls }
         }
     }
 
@@ -288,10 +404,10 @@ struct AirMapControls: View {
 
     private func instruction(_ state: AirTraceState) -> String {
         switch state {
-        case .ready: "Keep looking at the +. Pinch thumb and index, trace one closed outline in the air, return to the start and release."
-        case .tracing: "Tracing — keep your eyes on the +."
+        case .ready: "Pinch thumb and index, trace one closed outline in the air, return to the start and release."
+        case .tracing: "Tracing — keep both fingertips visible."
         case .candidateReady: "Review the raw trace (yellow) and bounding ellipse (cyan). Accept or Redo."
-        case .accepted: "Front region accepted. Choose the offset; rear calibration and handoff remain required."
+        case .accepted: "Screen-fixed region accepted. Choose a copy offset, then switch to Rear scene."
         case let .invalid(reason): "Stroke cleared — \(Self.describe(reason)). Redo."
         }
     }
@@ -301,7 +417,7 @@ struct AirMapControls: View {
         case .fixationDrift: "eyes left the reference"
         case .invalidGaze: "eyes unavailable or blinking"
         case .invalidHand: "fingertips not confidently tracked"
-        case .missingPair, .unpairedCapture: "hand or eyes missing for a frame"
+        case .missingPair, .unpairedCapture: "hand or source frame missing"
         case .stalePair, .captureGap, .duplicateCapture, .invalidTimestamp: "tracking data too old or skipped"
         case .generationChanged, .interrupted, .geometryChanged, .invalidModeTransition: "capture restarted or layout changed"
         case .insufficientSamples: "too few points (need 20)"
