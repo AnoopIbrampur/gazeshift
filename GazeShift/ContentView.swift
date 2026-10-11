@@ -17,6 +17,7 @@ enum ScreenStyle {
     static let minimumViewportHeight: CGFloat = 210
     static let maximumViewportHeight: CGFloat = 360
     static let viewportHeightFraction: CGFloat = 0.43
+    static let cameraAspectRatio: CGFloat = 3.0 / 4.0
     static let captureStatusHeight: CGFloat = 38
     static let gazeControlsAnchor = "gazeControls"
 }
@@ -439,31 +440,35 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { page in
             VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("GAZESHIFT / AIR TRACE").font(.caption.weight(.semibold)).foregroundStyle(ScreenStyle.accent)
-                    Text("Draw your demonstration region").font(.title3.weight(.semibold))
-                    Text("Eye tracking disabled · screen-fixed approximation.")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                        .accessibilityIdentifier("eyeTrackingDisabledBanner")
-                }
-                Text(snapshot.status.text).font(.subheadline.weight(.medium)).foregroundStyle(ScreenStyle.accent)
-                    .frame(height: ScreenStyle.captureStatusHeight, alignment: .leading)
-                    .accessibilityIdentifier("captureStatus")
                 HStack {
+                    Text("GAZESHIFT").font(.caption.weight(.semibold)).foregroundStyle(ScreenStyle.accent)
+                    Spacer()
                     Button("Front setup") { start(.setupFront) }.accessibilityIdentifier("frontSetup")
                     Button("Rear scene") { start(.liveRear) }.accessibilityIdentifier("rearScene")
-                    Spacer()
-                }.buttonStyle(.borderedProminent).tint(ScreenStyle.surface)
-                viewport.frame(height: max(ScreenStyle.minimumViewportHeight,
-                    min(ScreenStyle.maximumViewportHeight, page.size.height * ScreenStyle.viewportHeightFraction)))
-                HStack {
-                    Text("\(Int(viewportFrame.width)) × \(Int(viewportFrame.height)) pt · portrait")
-                    Spacer()
-                    Text(snapshot.mode == .setupFront ? "FRONT" : "REAR")
-                }.font(.caption.monospaced()).foregroundStyle(ScreenStyle.secondary)
+                }
+                .buttonStyle(.borderedProminent).tint(ScreenStyle.surface)
+                .padding(.horizontal, ScreenStyle.pagePadding)
+                viewport
+                    .frame(width: page.size.width, height: page.size.width / ScreenStyle.cameraAspectRatio)
+                    .overlay(alignment: .topLeading) {
+                        Text(snapshot.status.text).font(.subheadline.weight(.medium)).foregroundStyle(ScreenStyle.accent)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: ScreenStyle.captureStatusHeight)
+                            .padding(.horizontal, ScreenStyle.pagePadding)
+                            .background(.black.opacity(0.65))
+                            .accessibilityIdentifier("captureStatus")
+                    }
                 ScrollView {
                     VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
                         AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
+                        Text("Eye tracking disabled · screen-fixed approximation.")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                            .accessibilityIdentifier("eyeTrackingDisabledBanner")
+                        HStack {
+                            Text("\(Int(viewportFrame.width)) × \(Int(viewportFrame.height)) pt · portrait")
+                            Spacer()
+                            Text(snapshot.mode == .setupFront ? "FRONT" : "REAR")
+                        }.font(.caption.monospaced()).foregroundStyle(ScreenStyle.secondary)
                         if airTrace.reviewedRegion != nil {
                             Divider()
                             if let composition { ComparisonControls(mode: $viewMode, plan: composition.plan) }
@@ -486,9 +491,11 @@ struct ContentView: View {
                             Text("AIR-TRACE / \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")")
                                 .font(.caption2.monospaced()).foregroundStyle(ScreenStyle.secondary)
                         }.buttonStyle(.bordered)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, ScreenStyle.pagePadding)
                 }
-            }.padding(ScreenStyle.pagePadding)
+            }.padding(.vertical, ScreenStyle.spacing)
         }
         .background(ScreenStyle.background.ignoresSafeArea())
         .onAppear { airTrace.attach(events: capture.events) }
