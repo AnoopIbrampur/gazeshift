@@ -460,6 +460,102 @@ final class AirTraceModelTests: XCTestCase {
         XCTAssertNil(model.rearRegion(for: gaze.geometry))
     }
 
+    // Break caught: leaving the demo after a rear handoff kept a region accepted with failed
+    // front approval, allowing a later passed rear fit to use it without the demo warning.
+    func testDisablingUnvalidatedDemoClearsPendingAndRetainedRearRegions() throws {
+        for rearStarted in [false, true] {
+            let model = try acceptedModel(allowUnvalidatedGaze: true)
+            XCTAssertFalse(gaze.report?.passesCompleteGate == true)
+            model.end()
+            model.prepareForRearSelection()
+            gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+            if rearStarted {
+                events.send(.reset(generation: 2, mode: .liveRear))
+                model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+                XCTAssertNotNil(model.rearRegion(for: gaze.geometry))
+            }
+            XCTAssertNotNil(model.reviewedRegion)
+
+            model.allowUnvalidatedGaze = false
+
+            XCTAssertNil(model.reviewedRegion)
+            XCTAssertNil(model.patchOffset)
+            XCTAssertNil(model.rearRegion(for: gaze.geometry))
+            events.send(.reset(generation: 2, mode: .liveRear))
+            model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+            XCTAssertNil(model.rearRegion(for: gaze.geometry), "A later rear session cannot resurrect demo provenance")
+        }
+    }
+
+    func testUnchangedUnvalidatedDemoPreservesExplicitRearHandoff() throws {
+        let model = try acceptedModel(allowUnvalidatedGaze: true)
+        XCTAssertFalse(gaze.report?.passesCompleteGate == true)
+        model.end()
+        model.prepareForRearSelection()
+        gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+        events.send(.reset(generation: 2, mode: .liveRear))
+        model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+        XCTAssertTrue(model.allowUnvalidatedGaze)
+        XCTAssertNotNil(model.rearRegion(for: gaze.geometry))
+        XCTAssertEqual(model.patchOffset, ScreenPoint(x: 20, y: 0))
+        XCTAssertNil(gaze.calibration, "The demo still requires a fresh rear fit")
+    }
+
+    func testFrontApprovalRevokedDuringDemoClearsPendingAndRetainedRearRegionsOnDemoOff() throws {
+        for rearStarted in [false, true] {
+            let model = try candidateModel()
+            XCTAssertTrue(gaze.report?.passesCompleteGate == true)
+            model.allowUnvalidatedGaze = true
+            model.accept()
+            model.nudgeOffset(dx: 20, dy: 0)
+            XCTAssertNotNil(model.reviewedRegion)
+            gaze.recordEyeOnly(.observedFail)
+            XCTAssertFalse(gaze.report?.passesCompleteGate == true)
+            model.end()
+            model.prepareForRearSelection()
+            gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+            if rearStarted {
+                events.send(.reset(generation: 2, mode: .liveRear))
+                model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+            }
+
+            model.allowUnvalidatedGaze = false
+
+            XCTAssertNil(model.reviewedRegion)
+            XCTAssertNil(model.patchOffset)
+            XCTAssertNil(model.rearRegion(for: gaze.geometry))
+            events.send(.reset(generation: 2, mode: .liveRear))
+            model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+            XCTAssertNil(model.rearRegion(for: gaze.geometry))
+        }
+    }
+
+    func testValidatedFrontRegionSurvivesLeavingDemoAfterRearHandoff() throws {
+        for enableBeforeAccept in [false, true] {
+            let model = try candidateModel()
+            XCTAssertTrue(gaze.report?.passesCompleteGate == true)
+            if enableBeforeAccept { model.allowUnvalidatedGaze = true }
+            model.accept()
+            model.nudgeOffset(dx: 20, dy: 0)
+            let front = try XCTUnwrap(model.reviewedRegion)
+            model.allowUnvalidatedGaze = true
+            model.end()
+            model.prepareForRearSelection()
+            gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+            events.send(.reset(generation: 2, mode: .liveRear))
+            model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+
+            model.allowUnvalidatedGaze = false
+
+            XCTAssertEqual(model.reviewedRegion?.displayGeometry, front.displayGeometry)
+            XCTAssertEqual(model.reviewedRegion?.normalizedOffset, front.normalizedOffset)
+            XCTAssertEqual(model.reviewedRegion?.normalizedRadii, front.normalizedRadii)
+            XCTAssertEqual(model.patchOffset, ScreenPoint(x: 20, y: 0))
+            XCTAssertNotNil(model.rearRegion(for: gaze.geometry), "Passed front approval does not depend on demo")
+            XCTAssertNil(gaze.calibration, "Preserving region provenance never reuses the front fit")
+        }
+    }
+
     func testRevokedFrontApprovalCannotBeRetainedByRearSelection() throws {
         let model = try acceptedModel()
         model.end()
@@ -486,25 +582,27 @@ final class AirTraceModelTests: XCTestCase {
          { self.gaze.recordEyeOnly(.observedFail) }]
     }
 
-    private func startedModel() throws -> AirTraceModel {
+    private func startedModel(allowUnvalidatedGaze: Bool = false) throws -> AirTraceModel {
         gaze = try approvedGaze()
+        if allowUnvalidatedGaze { gaze.recordEyeOnly(.observedFail) }
         let model = AirTraceModel()
+        model.allowUnvalidatedGaze = allowUnvalidatedGaze
         model.attach(events: events) { self.gaze }
         model.layout(CGRect(x: 0, y: 0, width: 300, height: 400), scale: 3)
         model.begin(gaze: gaze, generation: 1)
         return model
     }
 
-    private func acceptedModel() throws -> AirTraceModel {
-        let model = try candidateModel()
+    private func acceptedModel(allowUnvalidatedGaze: Bool = false) throws -> AirTraceModel {
+        let model = try candidateModel(allowUnvalidatedGaze: allowUnvalidatedGaze)
         model.accept()
         XCTAssertNotNil(model.reviewedRegion)
         model.nudgeOffset(dx: 20, dy: 0)
         return model
     }
 
-    private func candidateModel() throws -> AirTraceModel {
-        let model = try startedModel()
+    private func candidateModel(allowUnvalidatedGaze: Bool = false) throws -> AirTraceModel {
+        let model = try startedModel(allowUnvalidatedGaze: allowUnvalidatedGaze)
         for index in 0..<24 { sendFrame(index) }
         sendFrame(24, pinched: false)
         XCTAssertEqual(model.flow?.state, .candidateReady)

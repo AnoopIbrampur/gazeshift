@@ -6,6 +6,25 @@ private struct GazeReportDocument: Identifiable {
     let text: String
 }
 
+struct GazeRunProgress: View {
+    let target: GazeTarget
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+            Text(target.label)
+                .font(.largeTitle.weight(.bold)).monospacedDigit()
+                .accessibilityIdentifier("gazeProgress")
+            Text("Look at the WHITE CIRCLE")
+                .font(.title2.weight(.semibold))
+            Text("Keep looking until the target moves; keep head and distance still. Gaze feedback is hidden during measurement.")
+                .font(.subheadline).foregroundStyle(ScreenStyle.secondary)
+        }
+        .foregroundStyle(.white)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct GazeCalibrationControls: View {
     @Binding var session: GazeSession
     @Binding var showReferences: Bool
@@ -14,13 +33,11 @@ struct GazeCalibrationControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+            if let target = session.target {
+                GazeRunProgress(target: target)
+            }
             Text(stateTitle).font(.headline).accessibilityIdentifier("gazeState")
-            Text(session.target?.label ?? session.message)
-                .font(.subheadline)
-                .accessibilityIdentifier("gazeProgress")
             if session.isRunning {
-                Text("Fixate the white dot. 0.5s settle + 1s sample; keep head and distance still.")
-                    .font(.caption).foregroundStyle(ScreenStyle.secondary)
                 if session.phase == .calibrating {
                     Text("Valid samples this target: \(session.currentTrainingCount)")
                         .font(.caption.monospaced())
@@ -28,6 +45,9 @@ struct GazeCalibrationControls: View {
                 }
                 Button("Cancel run") { session.cancel() }.accessibilityIdentifier("cancelGazeRun")
             } else {
+                Text(session.message)
+                    .font(.subheadline)
+                    .accessibilityIdentifier("gazeProgress")
                 HStack {
                     Button(session.calibration == nil ? "Calibrate" : "Recalibrate") { session.startCalibration() }
                         .disabled(!captureReady)
