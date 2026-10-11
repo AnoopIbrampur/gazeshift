@@ -586,7 +586,10 @@ struct ContentView: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in recordRearTouch(value.location) }
             .onEnded { value in
-                guard rearTouchEnabled else { return }
+                guard snapshot.mode == .liveRear, let flow = airTrace.flow,
+                      flow.geometry.mode == .rearLive,
+                      flow.session.captureGeneration == snapshot.generation,
+                      flow.state == .armed || flow.state == .tracing else { return }
                 recordRearTouch(value.location)
                 airTrace.finish()
             }
