@@ -1,6 +1,6 @@
 # P0 preflight — 2026-10-11
 
-**Current result: P0 pending.** Xcode license and first-launch checks pass. The user chose **Personal Team**, explicitly excluding WanderBug; the Xcode account authentication is expired and personal provisioning is unverified. The user reports the phone connected/unlocked, but the Mac still observes no physical iPhone run destination. This repository still contains documentation only; no app has been built or tested. P1 has not started.
+**Current result: physical P0 pending; simulator implementation authorized.** Xcode license and first-launch checks pass. The user signed in and the intended **Personal Team** is verified; personal device provisioning remains untested. An active USB iPhone is observed, but pairing and a physical run destination remain unresolved. The user explicitly directed coding with simulator verification while phone setup is pending. A minimal native starter app now exists; no camera or eye tracking is active.
 
 The maintained requirements are [BUILD_PROMPTS.md](../BUILD_PROMPTS.md), [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md) and [SIX_HOUR_PLAN.md](../SIX_HOUR_PLAN.md). This record adds evidence, not new product scope.
 
@@ -26,9 +26,9 @@ History: the Explore snapshot at **2026-10-11 14:17:14 EDT** recorded license, f
 ## Next gate
 
 - [x] Intended team confirmed by the user: **Personal Team, not WanderBug**.
-- [ ] In Xcode → Settings → Apple Accounts, the user must complete **Sign in Again** for the expired account, including credentials/MFA, then verify the Personal Team. The agent must not enter credentials or use WanderBug.
+- [x] User completed account sign-in; Explore observes Personal Team and no expired warning. Local Xcode metadata verifies the intended personal team. Physical-device provisioning is still untested.
 - [ ] Connect/unlock the iPhone 13, complete Trust/Developer Mode/account steps on the phone or in Xcode, and verify a real run destination. Record the actual device/iOS without committing device identifiers or signing material.
-- [ ] Once destination and team are ready, create only the minimal signed P0 screen and launch this build on the actual phone with a unique visible build marker. A simulator or screenshot cannot pass.
+- [ ] Launch the minimal P0 screen on the actual phone with Personal Team signing and a unique visible build marker. The user authorized simulator implementation first; simulator verification does not pass this physical gate.
 - [ ] Record launch provenance (**agent-observed** or **user-reported**), fixed orientation, measured render viewport in points/display scale, seated distance/lighting and timestamped setup duration. Close-distance eye/finger field-of-view compatibility remains a P1 physical test.
 - [ ] Run the relevant minimal build check and commit scoped changes. Obtain independent review of the actual committed BASE/HEAD before integration; preserve privacy and any existing rules.
 - [ ] Mark P0 passed only after tooling, intended signing and actual-device launch pass; then proceed to P1's two-configuration sensor proof.
@@ -41,3 +41,17 @@ History: the Explore snapshot at **2026-10-11 14:17:14 EDT** recorded license, f
 - **Measured continuation interval:** 14:23:54–14:28:04 EDT = **4 minutes 10 seconds** of setup/recovery work, including blocked checks. Earlier setup duration and the total event elapsed time are unknown. No six-hour timer is established by this record; do not reconstruct it from chat activity. Setup during the event counts toward the same 360 minutes.
 
 No app files or native build were created during this blocked continuation. Personal account sign-in, a detected physical destination and the signed visible P0 screen remain required. Independent read-only research/planning may continue; P1 and all runtime claims remain gated.
+
+## Simulator checkpoint — 2026-10-11T14:53:13-04:00
+
+The user explicitly authorized immediate coding and simulator verification while physical setup is pending. This permits implementation; it does not substitute simulator evidence for the actual-phone gate.
+
+| Check | Agent-observed result |
+| --- | --- |
+| App / build | Minimal native SwiftUI `GazeShift` app; shared scheme, iPhone only, portrait; iOS 17.0 minimum. Xcode 27.0 / iOS Simulator 27.0 SDK Debug build: exit 0. No packages or sensor code. |
+| Generated plist / signing setting | Clear camera-use description, portrait orientation and iPhone device family verified in built plist. Intended Personal Team explicitly configured; simulator build disables signing, so personal device provisioning is untested. |
+| Simulator runtime | Existing iPhone 17 Pro simulator, iOS 26.2; install and launch exit 0. Installed executable SHA-256 matches this newly built binary. |
+| Rendered screen | Screenshot inspected by the agent: visible marker **`P0-0.1-1011.14.52`**, portrait, viewport readout **354 × 449 pt** (whole points), display scale **3×**. Screen says “Simulator preview,” tracking inactive and physical verification pending. |
+| Physical / sensor gates | Signed actual-iPhone install, visible marker, physical geometry/distance/lighting, capture, calibration, gaze, rendering and recording: **not tested**. |
+
+The simulator screenshot and detailed command/hash evidence are retained in the ignored plan workspace. The build emitted one AppIntents metadata warning because this static app has no AppIntents dependency; no native compile errors occurred. Overall setup duration and the event timer remain unknown. Physical P0 has not passed. Later implementation may continue under the user's override, with all physical proof still pending.
