@@ -2,7 +2,7 @@
 
 GazeShift is a working title for an experimental assistive-vision project: use eye tracking to move an image transformation with a person's gaze, exploring whether important visual content could eventually be shifted toward usable peripheral vision when central vision is impaired.
 
-**Current status: a native app and offline flow preparation exist; physical gaze gates remain unpassed.** The [user-reported rear gaze repeat on 2026-10-11](docs/P2_REAR_GAZE_BLOCKER.md) failed the numerical and complete gates. A fresh front-mode calibration/test comparison is pending; a working end-to-end demo and clinical benefit remain unverified.
+**Current status: a native app and offline flow preparation exist; physical gaze gates remain unpassed.** The [user-reported front and rear gaze tests on 2026-10-11](docs/P2_REAR_GAZE_BLOCKER.md) both failed the numerical and complete gates. A working end-to-end demo and clinical benefit remain unverified.
 
 ## The first demo
 
