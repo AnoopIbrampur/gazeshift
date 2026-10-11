@@ -3,6 +3,7 @@ import ImageIO
 import Combine
 import CoreVideo
 import Metal
+import simd
 @testable import GazeShift
 
 /// Exercises the bundled source and real simulator GPU compiler, not physical camera pixels.
@@ -21,6 +22,46 @@ final class CompositeShaderTests: XCTestCase {
 }
 
 final class CapturePipelineTests: XCTestCase {
+    // Break caught: world-space face pose, or the wrong multiplication order, is reported as camera-relative.
+    func testFaceCameraPoseUsesSameFrameInverseCameraTimesFaceAndRejectsInvalidMatrices() throws {
+        let camera = simd_float4x4(columns: (SIMD4(0, 1, 0, 0), SIMD4(-1, 0, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(1, 2, 3, 1)))
+        let relative = simd_float4x4(columns: (SIMD4(1, 0, 0, 0), SIMD4(0, 0.5, 0.8660254, 0), SIMD4(0, -0.8660254, 0.5, 0), SIMD4(0.2, 0.3, -0.5, 1)))
+        let pose = try XCTUnwrap(FaceCameraPose(cameraTransform: camera, faceTransform: camera * relative))
+        XCTAssertEqual(pose.position.x, 0.2, accuracy: 1e-6)
+        XCTAssertEqual(pose.position.y, 0.3, accuracy: 1e-6)
+        XCTAssertEqual(pose.position.z, -0.5, accuracy: 1e-6)
+        XCTAssertEqual(abs(pose.orientation.vector.x), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(abs(pose.orientation.vector.w), 0.8660254, accuracy: 1e-6)
+        XCTAssertNil(FaceCameraPose(cameraTransform: simd_float4x4(), faceTransform: relative))
+        var invalid = camera
+        invalid.columns.0.x = .nan
+        XCTAssertNil(FaceCameraPose(cameraTransform: invalid, faceTransform: relative))
+    }
+
+    // Break caught: non-frame emits inflate main frame totals, or counters leak through a generation reset.
+    func testMainDeliveryCountersDeduplicateFrameIdentityAndResetWithGeneration() throws {
+        var counter = CaptureDeliveryCounter()
+        var value = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready, support: nil,
+                                    renderPacket: nil, eyes: nil, eyeIdentity: nil, hand: nil, handMessage: "fixture")
+        value.frameDiagnostics = CaptureFrameDiagnostics(identity: identity(10), sourceFrameCount: 20)
+        var delivered = counter.record(value, at: 10.1)
+        XCTAssertEqual(delivered.mainDelivery?.acceptedSnapshots, 1)
+        XCTAssertEqual(delivered.mainDelivery?.acceptedFrames, 1)
+        XCTAssertEqual(try XCTUnwrap(delivered.mainDelivery?.estimatedCaptureToMainAge), 0.1, accuracy: 1e-6)
+        delivered = counter.record(value, at: 10.2)
+        XCTAssertEqual(delivered.mainDelivery?.acceptedSnapshots, 2)
+        XCTAssertEqual(delivered.mainDelivery?.acceptedFrames, 1)
+        value.frameDiagnostics = CaptureFrameDiagnostics(identity: identity(11), sourceFrameCount: 22)
+        delivered = counter.record(value, at: 10.2)
+        XCTAssertEqual(delivered.mainDelivery?.acceptedFrames, 2)
+        let reset = CaptureSnapshot(sequence: 4, generation: 2, mode: .setupFront, status: .paused, support: nil,
+                                    renderPacket: nil, eyes: nil, eyeIdentity: nil, hand: nil, handMessage: "fixture")
+        delivered = counter.record(reset, at: 11)
+        XCTAssertEqual(delivered.mainDelivery?.acceptedSnapshots, 1)
+        XCTAssertEqual(delivered.mainDelivery?.acceptedFrames, 0)
+        XCTAssertNil(delivered.mainDelivery?.estimatedCaptureToMainAge)
+    }
+
     private func identity(_ timestamp: Double, receipt: Double = 10, generation: UInt64 = 1) -> FrameIdentity {
         FrameIdentity(generation: generation, captureTimestamp: timestamp, receivedAt: receipt)
     }
@@ -163,13 +204,19 @@ final class CapturePipelineTests: XCTestCase {
         let id = identity(1)
         let packet = RenderPacket(identity: id, image: try XCTUnwrap(image), geometry: geometry, mode: .setupFront)
         let hand = HandObservation(identity: id, indexTip: CGPoint(x: 0.2,y: 0.3), thumbTip: CGPoint(x: 0.3,y: 0.4), indexConfidence: 1, thumbConfidence: 1)
-        let snapshot = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready, support: nil, renderPacket: packet, eyes: eyes(), eyeIdentity: id, hand: hand, handMessage: "active")
+        var snapshot = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready, support: nil, renderPacket: packet, eyes: eyes(), eyeIdentity: id, hand: hand, handMessage: "active")
+        snapshot.frameDiagnostics = CaptureFrameDiagnostics(identity: id, sourceFrameCount: 1)
         let delayed = snapshot.forDisplay(at: 10.251)
         XCTAssertEqual(delayed.status, .sceneUnavailable)
         XCTAssertNil(delayed.renderPacket)
         XCTAssertNil(delayed.eyes)
         XCTAssertNil(delayed.eyeIdentity)
         XCTAssertNil(delayed.hand)
+        XCTAssertEqual(delayed.frameDiagnostics?.identity, id, "Stale diagnostics remain observational; stale sensor input remains removed")
+        snapshot.frameDiagnostics = CaptureFrameDiagnostics(identity: identity(2), sourceFrameCount: 2)
+        XCTAssertNil(snapshot.forDisplay(at: 10).frameDiagnostics, "Different-frame metadata must not attach to these pixels")
+        snapshot.frameDiagnostics = CaptureFrameDiagnostics(identity: identity(1, generation: 2), sourceFrameCount: 1)
+        XCTAssertNil(snapshot.forDisplay(at: 10).frameDiagnostics, "Different-generation metadata must not attach to these pixels")
     }
     func testRawInvalidEyeMetadataSurvivesOnlyForFreshEvaluation() throws {
         var image: CVPixelBuffer?

@@ -1,6 +1,88 @@
 import Foundation
 import CoreGraphics
 import CoreVideo
+import simd
+
+/// Same-frame ARKit face transform expressed in the active AR camera's coordinate system.
+/// This is not physical-screen registration or a measured retinal/head stability score.
+struct FaceCameraPose {
+    let position: SIMD3<Float>
+    let orientation: simd_quatf
+    init?(cameraTransform: simd_float4x4, faceTransform: simd_float4x4) {
+        let matrices = [cameraTransform, faceTransform]
+        guard matrices.allSatisfy({ matrix in (0..<4).allSatisfy { column in
+            (0..<4).allSatisfy { matrix[column][$0].isFinite }
+        } }), simd_determinant(cameraTransform).isFinite, simd_determinant(cameraTransform) != 0 else { return nil }
+        let relative = simd_inverse(cameraTransform) * faceTransform
+        let rotation = simd_quatf(relative)
+        let translation = relative.columns.3
+        guard (0..<4).allSatisfy({ translation[$0].isFinite && rotation.vector[$0].isFinite }),
+              simd_length(rotation.vector) > 0 else { return nil }
+        position = SIMD3(translation.x, translation.y, translation.z)
+        orientation = simd_normalize(rotation)
+    }
+    static func angularChangeDegrees(_ first: simd_quatf, _ next: simd_quatf) -> Double {
+        // q and -q represent the same rotation; report the shortest relative angle.
+        Double(2 * acos(min(1, abs(simd_dot(first.vector, next.vector))))) * 180 / .pi
+    }
+}
+
+struct CaptureFrameDiagnostics {
+    let identity: FrameIdentity
+    /// AR delegate callbacks after the current run cutoff, including rejected scene frames.
+    let sourceFrameCount: UInt64
+    let pose: FaceCameraPose?
+    let faceAnchorID: UUID?
+    let configuredFPS: Int?
+    let thermalState: String?
+    init(identity: FrameIdentity, sourceFrameCount: UInt64, pose: FaceCameraPose? = nil,
+         faceAnchorID: UUID? = nil, configuredFPS: Int? = nil, thermalState: String? = nil) {
+        self.identity = identity
+        self.sourceFrameCount = sourceFrameCount
+        self.pose = pose
+        self.faceAnchorID = faceAnchorID
+        self.configuredFPS = configuredFPS
+        self.thermalState = thermalState
+    }
+}
+
+struct CaptureMainDelivery {
+    let acceptedSnapshots: UInt64
+    let acceptedFrames: UInt64
+    let acceptedAt: TimeInterval
+    let estimatedCaptureToMainAge: TimeInterval?
+}
+
+/// Sidecar bookkeeping only; CaptureModel's existing generation/sequence guard still decides acceptance.
+struct CaptureDeliveryCounter {
+    private var generation: UInt64?
+    private var snapshots: UInt64 = 0
+    private var frames: UInt64 = 0
+    private var lastSource: TimeInterval?
+    mutating func record(_ snapshot: CaptureSnapshot, at now: TimeInterval) -> CaptureSnapshot {
+        if generation != snapshot.generation {
+            generation = snapshot.generation
+            snapshots = 0
+            frames = 0
+            lastSource = nil
+        }
+        snapshots &+= 1
+        let identity = snapshot.frameDiagnostics?.identity.generation == snapshot.generation ? snapshot.frameDiagnostics?.identity : nil
+        if let identity, identity.generation == generation,
+           identity.captureTimestamp.isFinite, lastSource.map({ identity.captureTimestamp > $0 }) ?? true {
+            frames &+= 1
+            lastSource = identity.captureTimestamp
+        }
+        let captureAt = identity.map { $0.estimatedCaptureAt ?? $0.receivedAt }
+        let age = captureAt.flatMap { time in
+            now.isFinite && time.isFinite && now >= time ? now - time : nil
+        }
+        var next = snapshot
+        next.mainDelivery = CaptureMainDelivery(acceptedSnapshots: snapshots, acceptedFrames: frames,
+                                               acceptedAt: now, estimatedCaptureToMainAge: age)
+        return next
+    }
+}
 
 /// Provisional demonstration limits from the build protocol, not measured accuracy.
 /// The blink cutoff is an exploratory rejection rule and needs device validation.
@@ -124,6 +206,9 @@ struct CaptureSnapshot {
     /// Retain invalid eyes so held-out rejection reasons remain truthful.
     var rawEyes: EyeObservation? = nil
     var rawEyeIdentity: FrameIdentity? = nil
+    /// Optional observational sidecars; never sensor quality or inference inputs.
+    var frameDiagnostics: CaptureFrameDiagnostics? = nil
+    var mainDelivery: CaptureMainDelivery? = nil
     /// Main-thread delivery can be delayed after capture validated a frame.
     /// Recheck every observation before an immutable update reaches the display.
     func forDisplay(at now: TimeInterval) -> CaptureSnapshot {
@@ -134,7 +219,9 @@ struct CaptureSnapshot {
         let safeStatus: CaptureStatus = staleScene ? .sceneUnavailable : (safePacket != nil && !validEyes ? .trackingUnavailable : status)
         let safeHandMessage = staleScene ? "Hand unavailable — stale source" : (hand != nil && safeHand == nil ? "Hand unavailable — stale result" : handMessage)
         let safeRawIdentity = rawEyeIdentity.flatMap { safePacket != nil && $0.generation == generation && $0.isFresh(at: now) ? $0 : nil }
-        return CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: safeStatus, support: support, renderPacket: safePacket, eyes: validEyes ? eyes : nil, eyeIdentity: validEyes ? eyeIdentity : nil, hand: safeHand, handMessage: safeHandMessage, rawEyes: safeRawIdentity == nil ? nil : rawEyes, rawEyeIdentity: safeRawIdentity)
+        // Preserve matching diagnostics even when stale display input is removed, so late delivery stays measurable.
+        let diagnostics = frameDiagnostics.flatMap { $0.identity.generation == generation && $0.identity == renderPacket?.identity ? $0 : nil }
+        return CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: safeStatus, support: support, renderPacket: safePacket, eyes: validEyes ? eyes : nil, eyeIdentity: validEyes ? eyeIdentity : nil, hand: safeHand, handMessage: safeHandMessage, rawEyes: safeRawIdentity == nil ? nil : rawEyes, rawEyeIdentity: safeRawIdentity, frameDiagnostics: diagnostics, mainDelivery: mainDelivery)
     }
     static let simulator = CaptureSnapshot(sequence: 0, generation: 0, mode: .setupFront, status: .simulator, support: nil, renderPacket: nil, eyes: nil, eyeIdentity: nil, hand: nil, handMessage: "Hand tracking unavailable")
 }

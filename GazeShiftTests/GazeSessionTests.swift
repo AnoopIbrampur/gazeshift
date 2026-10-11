@@ -2,9 +2,111 @@ import XCTest
 import Combine
 import CoreVideo
 import GazeShiftCore
+import simd
 @testable import GazeShift
 
 final class GazeSessionTests: XCTestCase {
+    // Break caught: settling/end-boundary frames, duplicates, or mismatched diagnostics contaminate window summaries.
+    func testDiagnosticWindowCountsObservedSpansAndHandlesMissingPoseAndQuaternionSign() throws {
+        var summary = GazeWindowDiagnostics()
+        let firstPose = FaceCameraPose(cameraTransform: matrix_identity_float4x4, faceTransform: matrix_identity_float4x4)!
+        var moved = matrix_identity_float4x4
+        moved.columns.3 = SIMD4(0.2, 0.4, -0.6, 1)
+        let secondPose = FaceCameraPose(cameraTransform: matrix_identity_float4x4, faceTransform: moved)!
+        let anchor = UUID()
+        func sample(_ time: Double, source: Double, count: UInt64, pose: FaceCameraPose?) throws -> CaptureSnapshot {
+            var value = try snapshot(x: 0.2, y: 0.2, host: time, source: source)
+            value.frameDiagnostics = CaptureFrameDiagnostics(identity: value.rawEyeIdentity!, sourceFrameCount: count,
+                                                            pose: pose, faceAnchorID: anchor, configuredFPS: 60, thermalState: "nominal")
+            value.mainDelivery = CaptureMainDelivery(acceptedSnapshots: count * 2, acceptedFrames: count - 1,
+                                                    acceptedAt: time + 0.01, estimatedCaptureToMainAge: 0.01)
+            return value
+        }
+        summary.observe(try sample(10.49, source: 1, count: 9, pose: firstPose), now: 10.49, startsAt: 10.5, endsAt: 11.5, generation: 1)
+        let first = try sample(10.5, source: 2, count: 10, pose: firstPose)
+        summary.observe(first, now: 10.51, startsAt: 10.5, endsAt: 11.5, generation: 1)
+        summary.observe(first, now: 10.52, startsAt: 10.5, endsAt: 11.5, generation: 1)
+        summary.observe(try sample(11.4, source: 3, count: 14, pose: secondPose), now: 11.41, startsAt: 10.5, endsAt: 11.5, generation: 1)
+        summary.observe(try sample(11.5, source: 4, count: 15, pose: nil), now: 11.5, startsAt: 10.5, endsAt: 11.5, generation: 1)
+        var mismatch = try sample(11.45, source: 5, count: 16, pose: firstPose)
+        mismatch.frameDiagnostics = first.frameDiagnostics
+        summary.observe(mismatch, now: 11.46, startsAt: 10.5, endsAt: 11.5, generation: 1)
+        XCTAssertEqual(summary.consumedFrames, 3, "Bad sidecars cannot hide a consumed camera frame")
+        XCTAssertEqual(summary.sourceFrameSpan, 5)
+        XCTAssertEqual(summary.mainFrameSpan, 5)
+        XCTAssertEqual(summary.mainSnapshotSpan, 9)
+        XCTAssertEqual(summary.poseCount, 2)
+        XCTAssertEqual(summary.metadataFrames, 2)
+        XCTAssertEqual(try XCTUnwrap(summary.meanPosition?.x), 0.1, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(summary.positionSpan?.z), 0.6, accuracy: 1e-6)
+        XCTAssertEqual(summary.maximumOrientationChangeDegrees, 0, accuracy: 1e-6)
+        XCTAssertEqual(FaceCameraPose.angularChangeDegrees(firstPose.orientation, simd_quatf(vector: -firstPose.orientation.vector)), 0, accuracy: 1e-6)
+        XCTAssertTrue(summary.reportLines.joined().contains("observed span"))
+        XCTAssertTrue(GazeWindowDiagnostics().reportLines.joined().contains("unavailable"))
+    }
+
+    // Break caught: optional diagnostics accidentally participate in fit, predictions, slot decisions, or gates.
+    func testDiagnosticsNeverChangeCalibrationPredictionsOrEvaluationGates() throws {
+        var baseline = try calibrated()
+        try evaluate(&baseline, offscreen: false)
+        let expected = try XCTUnwrap(baseline.report)
+        for variant in 1...3 {
+            var session = try calibrated(diagnosticVariant: variant)
+            try evaluate(&session, offscreen: false, diagnosticVariant: variant)
+            let report = try XCTUnwrap(session.report)
+            XCTAssertEqual(session.trainingCounts, baseline.trainingCounts)
+            let features = try EyeFeatures(horizontal: 0.35, vertical: 0.65)
+            let predicted = try session.calibration!.predict(features: features, geometry: session.geometry!)
+            let original = try baseline.calibration!.predict(features: features, geometry: baseline.geometry!)
+            XCTAssertEqual(predicted, original)
+            XCTAssertEqual(report.overallValidPredictions, expected.overallValidPredictions)
+            XCTAssertEqual(report.overallRejectionCounts, expected.overallRejectionCounts)
+            XCTAssertEqual(report.overallErrors?.medianPoints, expected.overallErrors?.medianPoints)
+            XCTAssertEqual(report.overallErrors?.p90Points, expected.overallErrors?.p90Points)
+            XCTAssertEqual(report.passesNumericalGate, expected.passesNumericalGate)
+            XCTAssertEqual(report.passesProtocolGate, expected.passesProtocolGate)
+            XCTAssertEqual(report.passesCompleteGate, expected.passesCompleteGate)
+            for (actual, original) in zip(session.completedWindows, baseline.completedWindows) {
+                XCTAssertEqual(actual.validPredictions, original.validPredictions)
+                XCTAssertEqual(actual.medianDXPoints, original.medianDXPoints)
+                XCTAssertEqual(actual.medianDYPoints, original.medianDYPoints)
+            }
+        }
+    }
+
+    // Break caught: sidecar summaries survive failed repeats, a new evaluation, or calibration invalidation.
+    func testDiagnosticSummariesFollowTrainingAndEvaluationResetBoundaries() throws {
+        var session = try calibrated()
+        XCTAssertEqual(session.trainingDiagnostics.count, 9)
+        XCTAssertEqual(session.trainingDiagnostics[0].consumedFrames, 30)
+        XCTAssertEqual(session.trainingDiagnostics[0].poseCount, 0, "Existing fixtures must not invent pose")
+        try evaluate(&session, offscreen: false)
+        XCTAssertEqual(session.evaluationDiagnostics.count, 10)
+        XCTAssertEqual(session.evaluationDiagnostics[0].consumedFrames, 20)
+        XCTAssertEqual(try XCTUnwrap(session.evaluationDiagnostics[0].maximumTickGap), 0.525, accuracy: 1e-6)
+        XCTAssertTrue(session.reportText.contains("pose unavailable"))
+        session.startEvaluation()
+        XCTAssertTrue(session.evaluationDiagnostics.isEmpty)
+        session.targetPresented(at: 60)
+        session.tick(now: 61.5)
+        XCTAssertEqual(session.evaluationDiagnostics.first?.consumedFrames, 0)
+        session.invalidate("fixture")
+        XCTAssertTrue(session.trainingDiagnostics.isEmpty)
+        XCTAssertTrue(session.evaluationDiagnostics.isEmpty)
+        session.startCalibration()
+        session.targetPresented(at: 70)
+        session.receive(try snapshot(x: 0.15, y: 0.15, host: 70.6), now: 70.6)
+        session.tick(now: 71.5)
+        XCTAssertTrue(session.trainingDiagnostics.isEmpty)
+        session.targetPresented(at: 72)
+        for index in 0..<30 {
+            let time = 72.51 + Double(index) * 0.03
+            session.receive(try snapshot(x: 0.15, y: 0.15, host: time), now: time)
+        }
+        session.tick(now: 73.5)
+        XCTAssertEqual(session.trainingDiagnostics.first?.consumedFrames, 30)
+    }
+
     func testNoMarkerBeforeNineTargetCalibrationAndCaptureUsesHostClock() throws {
         var session = configured()
         session.receive(try snapshot(x: 0.5, y: 0.5, host: 10, source: 5000), now: 10)
@@ -242,7 +344,7 @@ final class GazeSessionTests: XCTestCase {
         return session
     }
 
-    private func calibrated() throws -> GazeSession {
+    private func calibrated(diagnosticVariant: Int = 0) throws -> GazeSession {
         var session = configured()
         session.startCalibration()
         for target in 0..<9 {
@@ -251,7 +353,7 @@ final class GazeSessionTests: XCTestCase {
             session.targetPresented(at: start)
             for index in 0..<30 {
                 let time = start + 0.51 + Double(index) * 0.03
-                session.receive(try snapshot(x: point.x, y: point.y, host: time), now: time)
+                session.receive(try snapshot(x: point.x, y: point.y, host: time, diagnosticVariant: diagnosticVariant), now: time)
             }
             session.tick(now: start + 1.5)
         }
@@ -260,7 +362,7 @@ final class GazeSessionTests: XCTestCase {
         return session
     }
 
-    private func evaluate(_ session: inout GazeSession, offscreen: Bool) throws {
+    private func evaluate(_ session: inout GazeSession, offscreen: Bool, diagnosticVariant: Int = 0) throws {
         session.startEvaluation()
         for window in 0..<10 {
             let start = 30 + Double(window) * 2
@@ -269,7 +371,7 @@ final class GazeSessionTests: XCTestCase {
             XCTAssertNil(session.marker(at: start), "No feedback marker while measuring a target")
             for slot in 0..<20 {
                 let time = start + 0.525 + Double(slot) * 0.05
-                session.receive(try snapshot(x: offscreen ? -1 : target.x, y: target.y, host: time), now: time)
+                session.receive(try snapshot(x: offscreen ? -1 : target.x, y: target.y, host: time, diagnosticVariant: diagnosticVariant), now: time)
                 session.tick(now: time)
             }
             session.tick(now: start + 1.5)
@@ -278,7 +380,7 @@ final class GazeSessionTests: XCTestCase {
 
     private func snapshot(x: Double, y: Double, host: Double, source: Double? = nil,
                           blink: Float? = 0, tracked: Bool = true, scene: Bool = true,
-                          generation: UInt64 = 1) throws -> CaptureSnapshot {
+                          generation: UInt64 = 1, diagnosticVariant: Int = 0) throws -> CaptureSnapshot {
         var image: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &image), kCVReturnSuccess)
         let identity = FrameIdentity(generation: generation, captureTimestamp: source ?? host + 5000,
@@ -287,9 +389,18 @@ final class GazeSessionTests: XCTestCase {
         let packet = RenderPacket(identity: identity, image: try XCTUnwrap(image), geometry: geometry, mode: .liveRear)
         let eyes = EyeObservation(lookAtPoint: SIMD3(Float(x), Float(y), 1), leftEyeTranslation: SIMD3(-0.03, 0, 0),
                                   rightEyeTranslation: SIMD3(0.03, 0, 0), leftBlink: blink, rightBlink: blink, isTracked: tracked)
-        return CaptureSnapshot(sequence: 1, generation: generation, mode: .liveRear, status: .ready,
+        var result = CaptureSnapshot(sequence: 1, generation: generation, mode: .liveRear, status: .ready,
                                support: nil, renderPacket: scene ? packet : nil, eyes: eyes, eyeIdentity: identity,
                                hand: nil, handMessage: "Hand unavailable", rawEyes: eyes, rawEyeIdentity: identity)
+        if diagnosticVariant > 0 {
+            var face = matrix_identity_float4x4
+            if diagnosticVariant == 2 { face.columns.3.x = .nan }
+            let diagnosticIdentity = diagnosticVariant == 3 ? FrameIdentity(generation: generation + 1, captureTimestamp: identity.captureTimestamp, receivedAt: host) : identity
+            result.frameDiagnostics = CaptureFrameDiagnostics(identity: diagnosticIdentity, sourceFrameCount: 1,
+                pose: FaceCameraPose(cameraTransform: matrix_identity_float4x4, faceTransform: face),
+                configuredFPS: diagnosticVariant == 2 ? nil : 60, thermalState: diagnosticVariant == 2 ? nil : "nominal")
+        }
+        return result
     }
 }
 
