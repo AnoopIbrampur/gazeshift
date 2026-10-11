@@ -17,6 +17,7 @@ enum ScreenStyle {
     static let maximumViewportHeight: CGFloat = 360
     static let viewportHeightFraction: CGFloat = 0.43
     static let captureStatusHeight: CGFloat = 38
+    static let gazeControlsAnchor = "gazeControls"
 }
 
 struct ContentView: View {
@@ -58,24 +59,27 @@ struct ContentView: View {
                     Text(snapshot.mode == .setupFront ? "FRONT" : "REAR")
                 }
                 .font(.caption.monospaced()).foregroundStyle(ScreenStyle.secondary)
-                if let target = gaze.target {
-                    GazeRunProgress(target: target)
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
-                        GazeCalibrationControls(session: $gaze, showReferences: $showReferences, captureReady: snapshot.status == .ready)
-                        Divider()
-                        AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
-                        Divider()
-                        diagnostics
-                        HStack {
-                            Button("Retry") { gaze.invalidate("Not calibrated — capture restarted"); airTrace.interrupt(); capture.retry() }
-                                .accessibilityIdentifier("retryCapture")
-                            Button("Stop") { stop() }.accessibilityIdentifier("stopCapture")
-                            Spacer()
-                            Text(buildMarker).font(.caption2.monospaced()).foregroundStyle(ScreenStyle.secondary)
-                        }.buttonStyle(.bordered)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+                            GazeCalibrationControls(session: $gaze, showReferences: $showReferences, captureReady: snapshot.status == .ready)
+                                .id(ScreenStyle.gazeControlsAnchor)
+                            Divider()
+                            AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
+                            Divider()
+                            diagnostics
+                            HStack {
+                                Button("Retry") { gaze.invalidate("Not calibrated — capture restarted"); airTrace.interrupt(); capture.retry() }
+                                    .accessibilityIdentifier("retryCapture")
+                                Button("Stop") { stop() }.accessibilityIdentifier("stopCapture")
+                                Spacer()
+                                Text(buildMarker).font(.caption2.monospaced()).foregroundStyle(ScreenStyle.secondary)
+                            }.buttonStyle(.bordered)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .onChange(of: gaze.isRunning) { _, isRunning in
+                        if isRunning { scroll.scrollTo(ScreenStyle.gazeControlsAnchor, anchor: .top) }
+                    }
                 }
             }
             .padding(ScreenStyle.pagePadding)

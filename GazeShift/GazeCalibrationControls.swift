@@ -33,6 +33,9 @@ struct GazeCalibrationControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+            if let target = session.target {
+                GazeRunProgress(target: target)
+            }
             Text(stateTitle).font(.headline).accessibilityIdentifier("gazeState")
             if session.isRunning {
                 if session.phase == .calibrating {
