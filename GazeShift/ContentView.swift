@@ -247,7 +247,7 @@ struct ContentView: View {
     private var currentRegion: ReviewedRegion? {
         guard let geometry = gaze.geometry, let accepted = airTrace.reviewedRegion else { return nil }
         if accepted.displayGeometry == geometry { return accepted }
-        return try? accepted.retainedForModeTransition(to: geometry)
+        return airTrace.rearRegion(for: geometry)
     }
 
     /// Recomputed every frame from calibrated live gaze; nothing adaptive without a passed report.
@@ -320,7 +320,7 @@ struct ContentView: View {
         var notes: [String] = []
         if let compositeFailure { notes.append("Simulation unavailable — \(compositeFailure)") }
         if airTrace.reviewedRegion != nil, gaze.geometry != nil, currentRegion == nil {
-            notes.append("Region not usable in this camera mode yet (front→rear carry-over pending, ANO-10)")
+            notes.append("Region not available here — accept it in Front setup, then press Rear + eyes without moving the layout")
         }
         if gaze.report?.passesCompleteGate != true, !unvalidatedDemo {
             notes.append("Effects need a passed calibration report in this mode")

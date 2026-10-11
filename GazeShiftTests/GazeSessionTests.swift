@@ -420,24 +420,44 @@ final class AirTraceModelTests: XCTestCase {
         }
     }
 
-    func testExplicitRearSelectionRetainsOnlyPendingFrontProvenance() throws {
+    // Break caught: the capture generation in the setup ID blocked every deliberate same-display
+    // front→rear handoff, so the accepted region could never reach rear composition.
+    func testExplicitRearSelectionActivatesFrontRegionOnlyForThatRearSession() throws {
         let model = try acceptedModel()
         let front = try XCTUnwrap(model.reviewedRegion)
         model.end()
         model.prepareForRearSelection()
         gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+        let rearGeometry = try XCTUnwrap(gaze.geometry)
+        XCTAssertNil(model.rearRegion(for: rearGeometry), "Pending until the rear session actually starts")
         events.send(.reset(generation: 2, mode: .liveRear))
         model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
-        XCTAssertEqual(model.reviewedRegion?.normalizedOffset, front.normalizedOffset)
-        XCTAssertEqual(model.reviewedRegion?.normalizedRadii, front.normalizedRadii)
-        XCTAssertEqual(model.reviewedRegion?.displayGeometry, front.displayGeometry)
+        XCTAssertEqual(model.reviewedRegion?.displayGeometry, front.displayGeometry, "Front provenance is kept")
         XCTAssertEqual(model.reviewedRegion?.provenance.captureGeneration, 1)
-        XCTAssertEqual(model.reviewedRegion?.displayGeometry.mode, .frontSetup)
         XCTAssertEqual(model.patchOffset, ScreenPoint(x: 20, y: 0))
-        XCTAssertThrowsError(try front.retainedForModeTransition(to: XCTUnwrap(gaze.geometry)))
+        XCTAssertNil(gaze.calibration, "The front fit is never reused in rear mode")
+        let rear = try XCTUnwrap(model.rearRegion(for: rearGeometry))
+        XCTAssertEqual(rear.displayGeometry, rearGeometry)
+        XCTAssertEqual(rear.normalizedOffset, front.normalizedOffset)
+        XCTAssertEqual(rear.normalizedRadii, front.normalizedRadii)
+        XCTAssertNil(model.rearRegion(for: front.displayGeometry), "Only rear geometry can activate it")
         events.send(.reset(generation: 3, mode: .liveRear))
         XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.rearRegion(for: rearGeometry))
         XCTAssertNil(model.patchOffset)
+    }
+
+    func testRetainedRearRegionClearsWhenPhysicalViewportMoves() throws {
+        let model = try acceptedModel()
+        model.end()
+        model.prepareForRearSelection()
+        gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+        events.send(.reset(generation: 2, mode: .liveRear))
+        gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2,
+                       origin: CGPoint(x: 0, y: 40))
+        model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.rearRegion(for: gaze.geometry))
     }
 
     func testRevokedFrontApprovalCannotBeRetainedByRearSelection() throws {
