@@ -129,7 +129,9 @@ Normal live assist adds NO artificial blur. Implement the REQUIRED Demo comparis
 Original / Simulated blur / Simulated blur + copy in the SAME full viewport.
 Label simulation clearly and keep it off until selected. Apply the assumed blur
 LAST to both simulated variants of the same frame; copy original pixels first.
-A labeled frozen comparison is allowed, but is not real-time gaze evidence.
+Simulated blur + copy MUST show LIVE calibrated gaze moving both the simulated
+region and copied patch together, under the same loss/recovery rules. A labeled
+frozen comparison is supplementary only; it cannot replace this live evidence.
 
 Work only on the current phase. Keep responsibilities small: capture,
 calibration and rendering; no generic architecture or future scaffolding.
@@ -431,10 +433,13 @@ Simulated blur + copy using the SAME source frame, mask and full-viewport geomet
 It may stay off until selected but cannot be cut from the deliverable. Build the copy
 from original pixels FIRST, then apply the identical simulated blur LAST to
 both simulated variants. Never copy already blurred source pixels. The mask
-is an illustration, not exact patient vision. No side-by-side layout is required.
-A clearly labeled frozen-frame comparison is allowed for deterministic before/
-after viewing; record live eye-driven behavior separately and never call the
-frozen comparison real-time. Keep identical full-viewport geometry across views.
+is an illustration, not exact patient vision. Simulated blur + copy MUST run
+live: calibrated eye movement moves both the simulated region and relocated
+patch together in the same full viewport. Apply the same gaze/source validity
+and loss/recovery rules to both effects; invalid gaze clears blur and copy to
+the healthy original view. No side-by-side layout is required. A labeled frozen
+before/after comparison is supplementary only and cannot replace live gaze-
+contingent blur evidence. Keep identical full-viewport geometry across views.
 
 On missing, untracked, stale, blinking or invalid/off-screen gaze, clear the
 marker and copy immediately. Keep “Tracking unavailable — original view” while
@@ -489,6 +494,8 @@ relocation matches Original. Retest hand/face occlusion, broken stroke rejection
 fixation drift, reviewed offset preservation, camera switch/recalibration and
 placement rejection. Test all three required Demo comparison views, identical
 viewport/mask/frame, source-before-blur and blur-last ordering.
+Verify LIVE eye-only movement drives simulated blur and copy together, and
+both clear/recover under the same tracking rules. Static comparison cannot pass.
 For every gaze-loss case check cleared marker,
 disabled effect, original healthy source, persistent warning and valid recovery.
 For a source failure check visible Scene unavailable/Paused, not frozen “live”.
@@ -526,7 +533,9 @@ or Redo, explicit ellipse review, camera switch and live-mode calibration result
 held-out eye-only response with head still, Original/Relocated comparison,
 chosen offset, invalid-placement bypass, gaze loss to original and recovery.
 Record the required Original / Simulated blur / Simulated blur + copy comparison;
-label simulation and any frozen frame, separate from live eye-driven evidence.
+show LIVE eyes moving the simulated region and patch together plus their loss/
+recovery. Label simulation and any supplementary frozen frame; frozen evidence
+cannot replace the required live gaze-contingent blur demonstration.
 Include source failure/retry if it was material. Keep “Recorded scene / live
 gaze” visible if that fallback is used and “Simulated region” where relevant.
 Do not use synthetic/regenerated media to improve evidence or replace failures.

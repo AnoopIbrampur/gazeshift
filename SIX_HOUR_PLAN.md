@@ -62,7 +62,7 @@
 - [ ] Copy it to one user-chosen offset over the original scene. Explain source duplication, destination occlusion and gaze-chasing limitations.
 - [ ] Require valid in-bounds source and destination; conservatively reject destination overlap with the region plus the live-error safety gap. Show “No valid placement — original view” on rejection.
 - [ ] On invalid gaze, clear marker/copy and show “Tracking unavailable — original view” over a healthy source until three distinct fresh valid samples recover. A stalled scene instead shows “Scene unavailable” or “Paused”.
-- [ ] Implement all three required Demo comparison views with the same frame/mask/viewport; copy before blur and blur last. A labeled frozen comparison is allowed, separate from real-time gaze evidence. Normal Live assist stays unblurred.
+- [ ] Implement all three required Demo comparison views with the same frame/mask/viewport; copy before blur and blur last. Live calibrated gaze must move simulated region and patch together with shared loss/recovery. Frozen comparison is supplementary only. Normal Live assist stays unblurred.
 - [ ] Check offset preservation, source-before-blur/output, coordinate transforms, disabled-copy identity, bounds/overlap and loss/recovery. Commit the verified checkpoint.
 
 ## P5 — real-device verification (minutes 210–300)
@@ -70,12 +70,13 @@
 - [ ] Repeat P2 coverage/error gates and drift tests in live mode; keep all insufficient windows and off-screen errors in the report.
 - [ ] Challenge air-trace fixation drift, hand/face occlusion, incomplete strokes, switching, layout/distance changes, edge placements and stale/invalid data.
 - [ ] Verify separate source failure, gaze loss, placement failure and recovery; no stale copied patch or frozen frame labeled live.
+- [ ] Verify live eye-only movement drives simulated blur and copy together and both clear/recover; static comparison cannot pass this requirement.
 - [ ] Measure actual frame/update rates, processing time and sample age without calling them end-to-end latency.
 - [ ] Record agent-observed, user-reported and not-tested results separately; fix the highest-impact failures, rerun affected checks and commit.
 
 ## P6 — evidence, review and integration (minutes 300–360)
 
-- [ ] Record actual air tracing/fixation, ellipse review, camera-switch/calibration results, live eye-only relocation, all three required blur-comparison views and failure/recovery behavior. Label frozen comparisons as frozen.
+- [ ] Record actual air tracing/fixation, ellipse review, camera-switch/calibration results, live eye-only relocation, all three required comparison views and failure/recovery. Include live eyes moving simulated blur and patch together; labeled frozen comparisons cannot replace that evidence.
 - [ ] Verify the saved recording plays; use an external hand/eye view when possible. Keep assumed-region and recorded-source labels visible; no regenerated evidence.
 - [ ] Prepare an honest pitch covering the technical result, approximation, duplication/occlusion/gaze-chasing limits and future comparison with magnification.
 - [ ] Commit and obtain independent review of final BASE/HEAD; resolve all Critical/Important findings before permitted merge/push and verify remote state.
