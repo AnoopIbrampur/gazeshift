@@ -2,7 +2,7 @@
 
 GazeShift is a working title for an experimental assistive-vision project: use eye tracking to move an image transformation with a person's gaze, exploring whether important visual content could eventually be shifted toward usable peripheral vision when central vision is impaired.
 
-**Current status: documentation only. No prototype exists yet.** This private repository preserves the project idea and six-hour hackathon plan. A working demo, clinical benefit, and a working ChatGPT–GitHub connector have not been verified.
+**Current status: documentation only. No prototype exists yet.** This private repository preserves the project idea and six-hour hackathon plan. On 2026-10-11, the GitHub connector successfully identified the private repository and read `PROJECT_CONTEXT.md`; a working demo and clinical benefit remain unverified.
 
 ## The first demo
 
@@ -16,6 +16,7 @@ The longer-term idea is glasses or a headset for people with residual vision and
 
 - [Project context and working instructions](PROJECT_CONTEXT.md): durable context for ChatGPT and future contributors.
 - [Six-hour build plan](SIX_HOUR_PLAN.md): time budget, first-device go/no-go gate, tests, and demo evidence.
+- [Incremental build prompts](BUILD_PROMPTS.md): copyable native ARKit prompts for setup and every six-hour phase, with acceptance checks and resource links; Vercel is an optional later companion site.
 - [Private GitHub repository](https://github.com/Hussain-coder-eng/gazeshift).
 - [ChatGPT project](https://chatgpt.com/g/g-p-6acbc5e009008191a0d00a958ec143d0/project).
 
