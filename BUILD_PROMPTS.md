@@ -206,7 +206,7 @@ If eye data fails, stop the dependent build and preserve the failure evidence.
 
 ## P2 — calibrate and validate real eye movement
 
-**Resources:** [`lookAtPoint`](https://developer.apple.com/documentation/arkit/arfaceanchor/lookatpoint) defines the face-relative 3D estimate. [`leftEyeTransform`](https://developer.apple.com/documentation/arkit/arfaceanchor/lefteyetransform) and [`rightEyeTransform`](https://developer.apple.com/documentation/arkit/arfaceanchor/righteyetransform) describe eye coordinates. [`isTracked`](https://developer.apple.com/documentation/arkit/artrackable/istracked) concerns transform validity. [PRL calibration research](https://pmc.ncbi.nlm.nih.gov/articles/PMC4201094/) explains why clinical interpretation needs separate work.
+**Resources:** [`lookAtPoint`](https://developer.apple.com/documentation/arkit/arfaceanchor/lookatpoint) defines the face-relative 3D estimate. [`leftEyeTransform`](https://developer.apple.com/documentation/arkit/arfaceanchor/lefteyetransform) and [`rightEyeTransform`](https://developer.apple.com/documentation/arkit/arfaceanchor/righteyetransform) describe eye coordinates. [`isTracked`](https://developer.apple.com/documentation/arkit/artrackable/istracked) concerns transform validity; [`blendShapes`](https://developer.apple.com/documentation/arkit/arfaceanchor/blendshapes) supplies expression coefficients for explicit blink checks. [PRL calibration research](https://pmc.ncbi.nlm.nih.gov/articles/PMC4201094/) explains why clinical interpretation needs separate work.
 
 ```text
 Execute P2 only, minutes 30–90. Goal: a personal calibrated marker that responds
@@ -237,10 +237,12 @@ invalid captures instead of fabricating samples. Labels are the displayed
 target centers, never a pointer. Require a roughly still head, stable distance
 and the selected orientation. Record sample counts and setup conditions.
 
-Evaluate on separate, interleaved targets at x/y positions 0.25 and 0.75 plus
-center, with two passes. Do not train on these samples or feed target position
-into live inference. Calculate errors in view points and as a percentage of
-the viewport diagonal; report valid sample count, median and 90th percentile.
+Evaluate four novel positions at x/y positions 0.25 and 0.75, with two passes.
+Interleave center as a repeat control, but exclude center from novel-position
+held-out statistics because it was a training location. Do not train on test
+samples or feed target position into live inference. Calculate errors in view
+points and viewport-diagonal percentage; report sample count, median and p90
+for the four held-out positions, and center-repeat results separately.
 Declare the demo gate before collecting results: median <=10% and p90 <=20%
 of the diagonal, plus clear eye-only directional response. These permissive
 engineering thresholds are provisional demo criteria, not medical accuracy.
@@ -255,9 +257,11 @@ needed; if still poor, document the blocker instead of expanding the model.
 Keep calibration tied to orientation, render-view geometry and viewing setup.
 Invalidate it after orientation/layout changes; require a new calibration.
 Allow explicit recalibration. Keep it in memory for this session; no profiles.
-Use fresh tracked/finite data and the configured maximum age. Use available
-blink/eye-openness evidence to reject closed-eye samples with a named threshold
-verified on this phone; those coefficients are not gaze-confidence scores.
+Use fresh tracked/finite data and the configured maximum age. Reject closed-eye
+samples when either ARKit eye-blink coefficient reaches MAX_EYE_BLINK=0.6, a
+provisional named threshold to verify on this phone. Reject unavailable eye
+quality data and invalid/off-screen predictions; do not clamp them into fake
+edge gaze. Those expression coefficients are not gaze-confidence scores.
 Any smoothing must be light and measured; it adds delay and cannot fix bias.
 
 Deliverable: calibrated marker, minimal runnable fit/coordinate checks and
@@ -334,9 +338,12 @@ extra engine or performance framework without a measured bottleneck.
 Provide Start/Stop, Recalibrate, Original/Transformed, radius, strength and a
 small visible status. Keep controls readable and accessible. On missing,
 untracked, stale or invalid gaze, clear the marker immediately and disable the
-adaptive warp. With a healthy scene show the unmodified scene and the exact
+adaptive warp, including sustained unusable eyes under P2's blink/quality checks.
+Tracked, finite and fresh alone are insufficient during a blink. With a healthy
+scene show the unmodified scene and the exact
 message “Tracking unavailable — original view”. Keep it until three consecutive
-fresh valid samples arrive, then clear it and resume. Never leave a stale warp.
+fresh valid samples with distinct timestamps arrive, then clear it and resume.
+Never leave a stale warp or clamp off-screen predictions into valid edge gaze.
 
 Independently track scene freshness and session interruptions. When the rear
 source stops updating, show “Scene unavailable”/“Paused” visibly. Do not claim
@@ -348,6 +355,9 @@ Only if rear input is the proven blocker, support one locally selected or
 bundled prerecorded scene while retaining live eye estimates. Keep “Recorded
 scene / live gaze” visible throughout. Verify playback orientation and freshness;
 no network video service. This fallback does not satisfy a live-world claim.
+If combined tracking is unsupported but face tracking is supported, replace the
+world session with one supported ARFaceTrackingConfiguration for this fallback;
+do not run both sessions. Implement it only for a demonstrated capture blocker.
 
 Deliverable: live gaze-driven warp and a short loss/recovery record. On-phone
 checks: eyes move while head is still; original toggle really removes the warp;
