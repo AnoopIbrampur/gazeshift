@@ -2,6 +2,8 @@
 
 Recorded 2026-10-11. **Evidence provenance: user-reported physical runs, not agent-observed.** This preserves the requested single supported rear repeat and subsequent fresh front comparison under the existing [P2 contract](../BUILD_PROMPTS.md#p2--calibrate-and-validate-real-eye-movement).
 
+Later evidence: the [front diagnostic report on installed source d19aa5c](P2_FRONT_DIAGNOSTIC_BLOCKER.md) also has failed computed numerical/complete gates. For that later run, the user confirmed a handheld phone and the mint estimated-gaze dot, and reported seeing no white target. Its app-reported protocol PASS does not establish visible-target fixation. The two original reports below are preserved unchanged; both physical gates remain unpassed.
+
 ## Build and setup provenance
 
 - Installed source: `4c789554200cf6e833aa4e2d0d52386ca15aa63b`; build marker: `P2-0.1-1011.15.59`.
