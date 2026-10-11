@@ -58,6 +58,9 @@ struct ContentView: View {
                     Text(snapshot.mode == .setupFront ? "FRONT" : "REAR")
                 }
                 .font(.caption.monospaced()).foregroundStyle(ScreenStyle.secondary)
+                if let target = gaze.target {
+                    GazeRunProgress(target: target)
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
                         GazeCalibrationControls(session: $gaze, showReferences: $showReferences, captureReady: snapshot.status == .ready)
