@@ -9,6 +9,15 @@ public enum AirTraceDefaults {
     public static let fixationRadiusDiagonalFraction = 0.10
     public static let closureRadiusDiagonalFraction = 0.03
     public static let minimumDistinctSamples = 20
+    // Index-only drawing tolerance (Measure-style), provisional values for the handheld demo:
+    // brief Vision dropouts, low-confidence or out-of-view frames are skipped instead of clearing
+    // the stroke; only losing the finger for longer than this gap clears it.
+    public static let indexMaximumHandGapSeconds = 1.0
+    /// Finish auto-closes the loop when the end is within this fraction of the diagonal from the start.
+    public static let indexClosureRadiusDiagonalFraction = 0.25
+    public static let indexMinimumDistinctSamples = 12
+    /// Exponential smoothing weight of the newest fingertip point (1 = no smoothing).
+    public static let indexSmoothing = 0.5
 }
 /// Both tips are already mapped to canonical full-viewport view points by the capture adapter.
 public struct AirTraceHandSample: Sendable {
@@ -173,7 +182,7 @@ public struct AirTraceSession: Sendable {
             else if now - index.captureTimestamp > AirTraceDefaults.maximumSampleAgeSeconds { reason = .stalePair }
             else if index.generation != captureGeneration { reason = .generationChanged }
             else if let lastCaptureTimestamp, index.captureTimestamp <= lastCaptureTimestamp { reason = .duplicateCapture }
-            else if let lastCaptureTimestamp, index.captureTimestamp - lastCaptureTimestamp > AirTraceDefaults.maximumSampleAgeSeconds { reason = .captureGap }
+            else if let lastCaptureTimestamp, index.captureTimestamp - lastCaptureTimestamp > AirTraceDefaults.indexMaximumHandGapSeconds { reason = .captureGap }
             else if !geometry.contains(index.indexTip) || !index.indexConfidence.isFinite
                 || index.indexConfidence < AirTraceDefaults.minimumHandConfidence || index.indexConfidence > 1 { reason = .invalidHand }
             else if let sourceTime = lastSourceGazeTimestamp {
@@ -182,14 +191,24 @@ public struct AirTraceSession: Sendable {
             } else { reason = .missingPair }
         } else { reason = .missingPair }
         if let reason {
-            // Wait for the first usable post-Start sample; once drawing, a loss clears the attempt.
-            if state == .tracing { invalidate(reason) }
+            // Wait for the first usable post-Start sample. While drawing, a single missed, blurred,
+            // low-confidence or out-of-view frame is skipped; only a restart, bad clock, mismatched
+            // capture or a gap longer than `indexMaximumHandGapSeconds` clears the attempt.
+            if state == .tracing, Self.clearsIndexStroke(reason) { invalidate(reason) }
             return
         }
         guard let index else { return }
-        rawTrace.append(index.indexTip)
+        let smoothing = AirTraceDefaults.indexSmoothing
+        rawTrace.append(rawTrace.last.map { last in
+            ScreenPoint(x: last.x + smoothing * (index.indexTip.x - last.x),
+                        y: last.y + smoothing * (index.indexTip.y - last.y))
+        } ?? index.indexTip)
         lastCaptureTimestamp = index.captureTimestamp
         state = .tracing
+    }
+
+    private static func clearsIndexStroke(_ reason: AirTraceRejection) -> Bool {
+        [.generationChanged, .invalidTimestamp, .unpairedCapture, .captureGap, .geometryChanged].contains(reason)
     }
 
     public mutating func finishDrawing(now: Double, geometry currentGeometry: RenderGeometry) {
@@ -266,7 +285,8 @@ public struct AirTraceSession: Sendable {
         guard state == .tracing else { return }
         guard now.isFinite, let handTime = lastCaptureTimestamp, let sourceTime = lastSourceGazeTimestamp,
               now >= handTime, now >= sourceTime else { invalidate(.invalidTimestamp); return }
-        guard now - handTime <= AirTraceDefaults.maximumSampleAgeSeconds,
+        let handLimit = indexOnly ? AirTraceDefaults.indexMaximumHandGapSeconds : AirTraceDefaults.maximumSampleAgeSeconds
+        guard now - handTime <= handLimit,
               now - sourceTime <= AirTraceDefaults.maximumSampleAgeSeconds else {
             invalidate(.stalePair)
             return
@@ -360,14 +380,16 @@ public struct AirTraceSession: Sendable {
     private mutating func finishCandidate() {
         var distinct: [ScreenPoint] = []
         for point in rawTrace where !distinct.contains(point) { distinct.append(point) }
-        guard distinct.count >= AirTraceDefaults.minimumDistinctSamples else { invalidate(.insufficientSamples); return }
+        let minimumSamples = indexOnly ? AirTraceDefaults.indexMinimumDistinctSamples : AirTraceDefaults.minimumDistinctSamples
+        guard distinct.count >= minimumSamples else { invalidate(.insufficientSamples); return }
         let xs = rawTrace.map(\.x)
         let ys = rawTrace.map(\.y)
         guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max(),
               maxX > minX, maxY > minY else { invalidate(.degenerateStroke); return }
         guard let first = rawTrace.first, let last = rawTrace.last,
               hypot(last.x - first.x, last.y - first.y)
-                <= AirTraceDefaults.closureRadiusDiagonalFraction * geometry.diagonal else { invalidate(.openStroke); return }
+                <= (indexOnly ? AirTraceDefaults.indexClosureRadiusDiagonalFraction
+                              : AirTraceDefaults.closureRadiusDiagonalFraction) * geometry.diagonal else { invalidate(.openStroke); return }
         let center = ScreenPoint(x: minX + (maxX - minX) / 2, y: minY + (maxY - minY) / 2)
         candidate = RegionCandidate(
             normalizedOffset: ScreenPoint(x: (center.x - fixation.x) / geometry.width,

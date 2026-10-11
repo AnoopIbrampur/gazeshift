@@ -59,28 +59,71 @@ final class IndexTraceTests: XCTestCase {
         XCTAssertNotNil(try session.acceptCandidate())
     }
 
-    // Index-only mode retains the original confidence, age, generation, bounds and source checks.
-    func testInvalidIndexOrSourceClearsActiveStroke() throws {
-        for reason in [AirTraceRejection.missingPair, .invalidHand, .stalePair, .generationChanged, .duplicateCapture] {
+    // Measure-style tolerance: one missed, blurred, low-confidence, off-view or stale frame is skipped.
+    func testBriefIndexDropoutsAreSkippedNotFatal() throws {
+        for variant in 0..<5 {
             var session = try session()
             session.startDrawing(at: 1, geometry: try geometry())
             try consume(&session, sample(0))
-            let next = sample(1, time: reason == .duplicateCapture ? 1.01 : 1.02,
-                              confidence: reason == .invalidHand ? 0.1 : 1,
-                              generation: reason == .generationChanged ? 2 : 1)
-            session.consumeIndex(reason == .missingPair ? nil : next, captureTimestamp: next.captureTimestamp,
-                                 now: reason == .stalePair ? 2 : 1.02, geometry: try geometry())
-            XCTAssertEqual(session.state, .invalid(reason))
-            XCTAssertTrue(session.rawTrace.isEmpty)
+            let bad: AirTraceIndexSample? = switch variant {
+            case 0: nil
+            case 1: sample(1, time: 1.02, confidence: 0.1)
+            case 2: AirTraceIndexSample(indexTip: ScreenPoint(x: 301, y: 1), indexConfidence: 1, captureTimestamp: 1.02, generation: 1)
+            case 3: AirTraceIndexSample(indexTip: ScreenPoint(x: .nan, y: 1), indexConfidence: 1, captureTimestamp: 1.02, generation: 1)
+            default: sample(1, time: 1.01) // duplicate capture
+            }
+            session.consumeIndex(bad, captureTimestamp: bad?.captureTimestamp ?? 1.02, now: 1.02, geometry: try geometry())
+            XCTAssertEqual(session.state, .tracing, "variant \(variant)")
+            XCTAssertEqual(session.rawTrace.count, 1)
+            try consume(&session, sample(2, time: 1.03))
+            XCTAssertEqual(session.rawTrace.count, 2, "drawing resumes after the dropout")
         }
-        for point in [ScreenPoint(x: .nan, y: 1), ScreenPoint(x: 301, y: 1)] {
-            var session = try session()
-            session.startDrawing(at: 1, geometry: try geometry())
-            try consume(&session, sample(0))
-            session.consumeIndex(AirTraceIndexSample(indexTip: point, indexConfidence: 1,
-                captureTimestamp: 1.02, generation: 1), captureTimestamp: 1.02, now: 1.02, geometry: try geometry())
-            XCTAssertEqual(session.state, .invalid(.invalidHand))
+    }
+
+    // Losing the finger for longer than the gap, a restart or a camera stall still clears the stroke.
+    func testLongLossRestartOrStalledSourceStillClearsStroke() throws {
+        var gap = try session()
+        gap.startDrawing(at: 1, geometry: try geometry())
+        try consume(&gap, sample(0))
+        // Camera frames keep arriving but Vision never sees the finger again.
+        var t = 1.06
+        while t < 1.01 + AirTraceDefaults.indexMaximumHandGapSeconds + 0.1 {
+            gap.observeSource(captureTimestamp: t, generation: 1, now: t, geometry: try geometry())
+            gap.consumeIndex(nil, captureTimestamp: t, now: t, geometry: try geometry())
+            if t < 1.01 + AirTraceDefaults.indexMaximumHandGapSeconds - 0.05 { XCTAssertEqual(gap.state, .tracing) }
+            t += 0.05
         }
+        if case .invalid = gap.state {} else { XCTFail("long loss must clear, got \(gap.state)") }
+        XCTAssertTrue(gap.rawTrace.isEmpty)
+
+        var restart = try session()
+        restart.startDrawing(at: 1, geometry: try geometry())
+        try consume(&restart, sample(0))
+        let other = sample(1, time: 1.02, generation: 2)
+        restart.consumeIndex(other, captureTimestamp: 1.02, now: 1.02, geometry: try geometry())
+        XCTAssertEqual(restart.state, .invalid(.generationChanged))
+
+        var watchdog = try session()
+        watchdog.startDrawing(at: 1, geometry: try geometry())
+        try consume(&watchdog, sample(0))
+        watchdog.expireInputs(now: 1.01 + AirTraceDefaults.indexMaximumHandGapSeconds + 0.05, geometry: try geometry())
+        XCTAssertEqual(watchdog.state, .invalid(.stalePair))
+    }
+
+    // Jitter is smoothed and a loosely closed loop is auto-closed on Finish.
+    func testSmoothingAndLooseClosure() throws {
+        var smooth = try self.session()
+        smooth.startDrawing(at: 1, geometry: try geometry())
+        try consume(&smooth, AirTraceIndexSample(indexTip: ScreenPoint(x: 100, y: 100), indexConfidence: 1, captureTimestamp: 1.01, generation: 1))
+        try consume(&smooth, AirTraceIndexSample(indexTip: ScreenPoint(x: 120, y: 100), indexConfidence: 1, captureTimestamp: 1.02, generation: 1))
+        XCTAssertEqual(smooth.rawTrace.last?.x ?? 0, 110, accuracy: 1e-9)
+
+        var loose = try self.session()
+        loose.startDrawing(at: 1, geometry: try geometry())
+        // Three-quarter circle: ends ~85 pt from the start (> old 15 pt limit, < 0.25 diagonal).
+        for i in 0..<18 { try consume(&loose, AirTraceIndexSample(indexTip: ScreenPoint(x: 150 + 60 * cos(Double(i) * .pi / 12), y: 200 + 60 * sin(Double(i) * .pi / 12)), indexConfidence: 1, captureTimestamp: 1.01 + Double(i) * 0.01, generation: 1)) }
+        loose.finishDrawing(now: 1.19, geometry: try geometry())
+        XCTAssertEqual(loose.state, .candidateReady)
     }
 
     // Explicit Finish cannot bypass minimum samples, closure, area or current capture freshness.
@@ -88,9 +131,9 @@ final class IndexTraceTests: XCTestCase {
         for variant in 0..<5 {
             var session = try session()
             session.startDrawing(at: 1, geometry: try geometry())
-            let count = variant == 0 ? 0 : (variant == 1 ? 19 : 25)
+            let count = variant == 0 ? 0 : (variant == 1 ? AirTraceDefaults.indexMinimumDistinctSamples - 1 : 25)
             for i in 0..<count {
-                let point = variant == 2 ? ScreenPoint(x: 50 + Double(i), y: 50 + Double(i))
+                let point = variant == 2 ? ScreenPoint(x: 20 + 10 * Double(i), y: 20 + 10 * Double(i))
                     : (variant == 3 ? ScreenPoint(x: 50 + Double(i % 24), y: 50) : sample(i).indexTip)
                 try consume(&session, AirTraceIndexSample(indexTip: point, indexConfidence: 1,
                     captureTimestamp: 1.01 + Double(i) * 0.01, generation: 1))

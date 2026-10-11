@@ -56,8 +56,9 @@ final class IndexTraceFlowTests: XCTestCase {
             }
             flow.indexResult(next, frame: variant == 2 ? input(2).frame : next.frame,
                              captureTime: next.captureTime, now: next.captureTime, geometry: try geometry())
-            XCTAssertEqual(flow.state, .invalid(.missingPair))
-            XCTAssertTrue(flow.rawTrace.isEmpty)
+            // Tolerant index drawing: the unmatched result is skipped (never drawn), not fatal.
+            XCTAssertEqual(flow.state, .tracing)
+            XCTAssertEqual(flow.rawTrace.count, 1, "a mismatched frame must never add a point")
         }
     }
 }

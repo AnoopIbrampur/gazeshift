@@ -837,8 +837,9 @@ final class ManualAirTraceModelTests: XCTestCase {
     func testHandOnlyAppModelAcceptsWithoutCalibrationOrEyeEvents() throws {
         let model = try accepted()
         let ellipse = try XCTUnwrap(model.reviewedRegion).screenFixedEllipse(geometry: geometry())
-        XCTAssertEqual(ellipse.center.x, 120, accuracy: 1e-6)
-        XCTAssertEqual(ellipse.center.y, 140, accuracy: 1e-6)
+        // Index smoothing slightly shrinks the min/max box, so allow a couple of points.
+        XCTAssertEqual(ellipse.center.x, 120, accuracy: 2)
+        XCTAssertEqual(ellipse.center.y, 140, accuracy: 2)
     }
 
     // Break caught: ordinary motion or a late pre-Start inference enters the intentional outline.
@@ -889,15 +890,22 @@ final class ManualAirTraceModelTests: XCTestCase {
     }
 
     // Break caught: invalid hand data or silence is bridged by the next good callback.
-    func testNilLowConfidenceAndStaleHandClearStrokeWithoutEyeInput() throws {
+    // Tolerant index drawing: one missed or low-confidence Vision result is skipped (never drawn),
+    // while a stalled camera source still clears the stroke.
+    func testMissedOrLowConfidenceHandIsSkippedButStalledSourceClears() throws {
         for variant in 0..<3 {
             let model = try model()
             frame(0)
             XCTAssertEqual(model.flow?.state, .tracing)
-            if variant == 2 { model.tick(now: ProcessInfo.processInfo.systemUptime + 0.251, geometry: try geometry()) }
-            else { frame(1, handPresent: variant != 0, confidence: variant == 1 ? 0.1 : 0.9) }
-            if case .invalid = model.flow?.state {} else { XCTFail("Invalid input survived") }
-            XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+            if variant == 2 {
+                model.tick(now: ProcessInfo.processInfo.systemUptime + 0.251, geometry: try geometry())
+                if case .invalid = model.flow?.state {} else { XCTFail("Stalled source survived") }
+                XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+            } else {
+                frame(1, handPresent: variant != 0, confidence: variant == 1 ? 0.1 : 0.9)
+                XCTAssertEqual(model.flow?.state, .tracing, "a single bad frame must not clear the stroke")
+                XCTAssertEqual(model.flow?.rawTrace.count, 1, "a bad frame must not add a point")
+            }
             model.end()
         }
     }
@@ -912,7 +920,7 @@ final class ManualAirTraceModelTests: XCTestCase {
         model.prepareForRearSelection(geometry: try geometry())
         events.send(.reset(generation: 2, mode: .liveRear))
         let rear = try XCTUnwrap(model.rearRegion(for: geometry(.rearLive)))
-        XCTAssertEqual(try rear.screenFixedEllipse(geometry: geometry(.rearLive)).center.x, 120, accuracy: 1e-6)
+        XCTAssertEqual(try rear.screenFixedEllipse(geometry: geometry(.rearLive)).center.x, 120, accuracy: 2)
         XCTAssertEqual(model.patchOffset, ScreenPoint(x: 120, y: 150))
         model.nudgeOffset(dx: 20, dy: 0)
         XCTAssertEqual(model.patchOffset, ScreenPoint(x: 140, y: 150))
