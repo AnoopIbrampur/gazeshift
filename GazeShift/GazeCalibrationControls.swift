@@ -100,6 +100,7 @@ extension GazeSession {
             "Setup: \(geometry.viewingSetupID)",
             "Viewing distance/head stability: requested, not measured automatically",
             "Training samples by target (9 required): \(trainingCounts)",
+            "Observational diagnostics only: signed errors and raw features do not change the fit, scoring or declared accuracy gates.",
             "Features: face-relative eye-midpoint → lookAtPoint direction ratios → personal affine fit → view points",
             "Normalized view = points / viewport; drawing pixels = points × scale. Camera-image UV transform is separate.",
             "Timing: host monotonic capture estimates; UI target acknowledgement; no measured photon latency",
@@ -109,10 +110,15 @@ extension GazeSession {
             "Eye-only response (entered by user): \(eyeOnlyText(report.eyeOnlyResponse))",
             "Novel total: received \(report.overallReceivedUniqueSamples), valid \(report.overallValidPredictions)/160, rejected \(report.overallRejectedSlots); \(statistics(report.overallErrors))",
             "Novel rejections: \(rejections(report.overallRejectionCounts))",
-            "Center controls are reported separately and excluded from novel accuracy:",
         ]
+        for (index, summary) in trainingFeatureSummaries.enumerated() {
+            let positions = GazeRunPolicy.trainingCoordinates
+            lines.append("Training target \(index + 1) (\(positions[index % positions.count]), \(positions[index / positions.count]) normalized): \(featureStatistics(summary))")
+        }
+        lines.append("Center controls are reported separately and excluded from novel accuracy:")
         for result in completedWindows {
             lines.append("pass \(result.pass) \(result.target.rawValue): received \(result.receivedUniqueSamples), valid \(result.validPredictions)/\(result.expectedSlots), rejected \(result.rejectedSlots); \(statistics(result.errors)); \(rejections(result.rejectionCounts))")
+            lines.append("  \(signedStatistics(result)); \(featureStatistics(result.featureSummary))")
             lines.append("  presented \(timestamp(result.presentedAt)); capture window [\(timestamp(result.startsAt)), \(timestamp(result.endsAt))) host seconds")
         }
         lines.append("Finite offscreen predictions remain in accuracy scores; the live dot rejects them. Missing features (including a failed finite-feature conversion) are missingQuality. Raw unavailable camera samples are missing.")
@@ -128,6 +134,16 @@ extension GazeSession {
     }
     private func rejections(_ counts: [RejectionReason: Int]) -> String {
         counts.isEmpty ? "none" : counts.sorted { $0.key.rawValue < $1.key.rawValue }.map { "\($0.key.rawValue)=\($0.value)" }.joined(separator: ", ")
+    }
+    private func signedStatistics(_ result: HeldOutWindowResult) -> String {
+        guard let dx = result.medianDXPoints, let dy = result.medianDYPoints else { return "signed median dx/dy unavailable" }
+        return String(format: "signed median dx %.1fpt, dy %.1fpt (+right/+down)", dx, dy)
+    }
+    private func featureStatistics(_ summary: EyeFeatureSummary?) -> String {
+        guard let summary else { return "raw eye features unavailable" }
+        return String(format: "raw h mean %.6g, population SD %.6g; v mean %.6g, population SD %.6g",
+                      summary.horizontalMean, summary.horizontalPopulationSD,
+                      summary.verticalMean, summary.verticalPopulationSD)
     }
     private func timestamp(_ value: Double?) -> String { value.map { String(format: "%.3f", $0) } ?? "unavailable" }
     private func eyeOnlyText(_ value: EyeOnlyResponse) -> String {

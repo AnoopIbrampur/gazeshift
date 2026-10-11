@@ -19,6 +19,7 @@ final class GazeSessionTests: XCTestCase {
         session.tick(now: 11.5)
         XCTAssertNil(session.calibration)
         XCTAssertEqual(session.trainingIndex, 0, "Insufficient target repeats instead of making up samples")
+        XCTAssertTrue(session.trainingFeatureSummaries.isEmpty)
     }
 
     func testFittedMarkerNeedsThreeDistinctSamplesAndClearsForBlinkLossStaleAndOffscreen() throws {
@@ -65,6 +66,7 @@ final class GazeSessionTests: XCTestCase {
             XCTAssertNil(session.report)
             XCTAssertNil(session.target)
             XCTAssertEqual(session.phase, .uncalibrated)
+            XCTAssertTrue(session.trainingFeatureSummaries.isEmpty)
         }
     }
 
@@ -172,6 +174,66 @@ final class GazeSessionTests: XCTestCase {
         XCTAssertEqual(session.completedWindows[0].rejectedSlots, 20)
         XCTAssertEqual(session.completedWindows[0].rejectionCounts[.missedSchedule], 20)
         XCTAssertEqual(session.completedWindows[0].endsAt, 31.5)
+    }
+
+    // Break caught: summaries include a failed capture or survive a new calibration/setup.
+    func testTrainingFeatureSummariesFollowCompletedTargetsAndResetWithCalibration() throws {
+        var session = try calibrated()
+        XCTAssertEqual(session.trainingFeatureSummaries.count, 9)
+        let coordinates = [0.15, 0.5, 0.85]
+        for (index, value) in session.trainingFeatureSummaries.enumerated() {
+            let summary = try XCTUnwrap(value)
+            XCTAssertEqual(summary.horizontalMean, coordinates[index % 3], accuracy: 1e-7)
+            XCTAssertEqual(summary.verticalMean, coordinates[index / 3], accuracy: 1e-7)
+            XCTAssertEqual(summary.horizontalPopulationSD, 0, accuracy: 1e-12)
+            XCTAssertEqual(summary.verticalPopulationSD, 0, accuracy: 1e-12)
+        }
+        session.startEvaluation()
+        XCTAssertEqual(session.trainingFeatureSummaries.count, 9)
+        session.cancel()
+        session.startCalibration()
+        XCTAssertTrue(session.trainingFeatureSummaries.isEmpty)
+        session.targetPresented(at: 60)
+        session.receive(try snapshot(x: -9, y: -9, host: 60.6), now: 60.6)
+        session.tick(now: 61.5)
+        XCTAssertTrue(session.trainingFeatureSummaries.isEmpty, "An insufficient capture has no completed-target summary")
+        session.targetPresented(at: 62)
+        for index in 0..<30 {
+            let time = 62.51 + Double(index) * 0.03
+            session.receive(try snapshot(x: 0.75, y: 0.8, host: time), now: time)
+        }
+        session.tick(now: 63.5)
+        XCTAssertEqual(session.trainingFeatureSummaries.count, 1)
+        let repeated = try XCTUnwrap(session.trainingFeatureSummaries[0])
+        XCTAssertEqual(repeated.horizontalMean, 0.75, accuracy: 1e-7)
+        XCTAssertEqual(repeated.verticalMean, 0.8, accuracy: 1e-7)
+        session.invalidate("Stopped")
+        XCTAssertTrue(session.trainingFeatureSummaries.isEmpty)
+    }
+
+    // Break caught: the shared/exported report omits signed or raw-feature diagnostics or invents empty values.
+    func testReportExportsObservationalDiagnosticsAndUnavailableEmptyWindows() throws {
+        var session = try calibrated()
+        try evaluate(&session, offscreen: true)
+        let text = session.reportText
+        XCTAssertEqual(text.components(separatedBy: "\n").filter { $0.hasPrefix("Training target ") }.count, 9)
+        XCTAssertTrue(text.contains("signed median dx -375.0pt"))
+        XCTAssertTrue(text.contains("+right/+down"))
+        XCTAssertTrue(text.contains("raw h mean -1"))
+        XCTAssertTrue(text.contains("population SD"))
+        XCTAssertTrue(text.contains("Observational diagnostics"))
+        session.recordEyeOnly(.observedFail)
+        XCTAssertTrue(session.reportText.contains("signed median dx -375.0pt"))
+
+        session.startEvaluation()
+        for window in 0..<10 {
+            let start = 60 + Double(window) * 2
+            session.targetPresented(at: start)
+            session.tick(now: start + 1.5)
+        }
+        XCTAssertTrue(session.reportText.contains("signed median dx/dy unavailable"))
+        XCTAssertTrue(session.reportText.contains("raw eye features unavailable"))
+        XCTAssertFalse(try XCTUnwrap(session.report).passesNumericalGate)
     }
 
     private func configured() -> GazeSession {
