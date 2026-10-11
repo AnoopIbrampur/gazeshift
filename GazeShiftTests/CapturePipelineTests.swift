@@ -22,6 +22,23 @@ final class CompositeShaderTests: XCTestCase {
 }
 
 final class CapturePipelineTests: XCTestCase {
+    // Break caught: a frame arriving between timer ticks is rejected using the earlier tick's clock.
+    func testDefaultDisplayFreshnessUsesCurrentClockBetweenSchedulerTicks() throws {
+        var image: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 2, 2, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &image)
+        let current = ProcessInfo.processInfo.systemUptime
+        let earlierTick = current - 0.1
+        let id = identity(1, receipt: current - 0.01)
+        let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 400),
+                                                     displayTransform: .identity, orientation: .up, mirrored: false))
+        let packet = RenderPacket(identity: id, image: try XCTUnwrap(image), geometry: geometry, mode: .setupFront)
+        let snapshot = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready,
+                                       support: nil, renderPacket: packet, eyes: nil, eyeIdentity: nil,
+                                       hand: nil, handMessage: "fixture")
+        XCTAssertNil(snapshot.forDisplay(at: earlierTick).renderPacket)
+        XCTAssertEqual(snapshot.forDisplay().status, .ready)
+        XCTAssertNotNil(snapshot.forDisplay().renderPacket)
+    }
     // Break caught: a fresh camera frame is demoted solely because eye extraction is disabled.
     func testFreshCameraRemainsReadyWithoutEyes() throws {
         var image: CVPixelBuffer?

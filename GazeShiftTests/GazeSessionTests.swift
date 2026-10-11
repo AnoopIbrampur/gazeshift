@@ -867,11 +867,15 @@ final class ManualAirTraceModelTests: XCTestCase {
 
     // Break caught: Retry/Stop or unsolicited mode changes retain effects from a previous capture run.
     func testCaptureResetAndLayoutChangesClearAcceptedRegion() throws {
-        for variant in 0..<3 {
+        for variant in 0..<4 {
             let model = try accepted()
             if variant == 0 { events.send(.reset(generation: 2, mode: .liveRear)) }
             else if variant == 1 { model.layout(CGRect(x: 1, y: 0, width: 300, height: 400), scale: 3) }
-            else { model.interrupt() }
+            else if variant == 2 { model.interrupt() }
+            else {
+                model.prepareForRearSelection(geometry: try geometry())
+                model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: try geometry(.rearLive, setup: "moved"))
+            }
             XCTAssertNil(model.reviewedRegion)
             XCTAssertNil(model.patchOffset)
             model.end()

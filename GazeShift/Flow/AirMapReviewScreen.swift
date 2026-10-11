@@ -232,7 +232,9 @@ final class AirTraceModel: ObservableObject {
 
     func tick(now: Double, geometry: RenderGeometry?) {
         if let region = reviewedRegion, let geometry {
-            if region.displayGeometry != geometry, rearRegion(for: geometry) == nil, !pendingRearReset { interrupt() }
+            let deliberateTransition = (pendingRearReset || retainedInRear)
+                && (try? region.retainedForModeTransition(to: geometry)) != nil
+            if region.displayGeometry != geometry, !deliberateTransition { interrupt() }
         } else if reviewedRegion != nil { interrupt() }
         guard var current = flow else { return }
         let before = current.state

@@ -428,7 +428,7 @@ struct ContentView: View {
     @State private var viewportFrame: CGRect = .zero
     @State private var now = ProcessInfo.processInfo.systemUptime
     private let timer = Timer.publish(every: CaptureLimits.watchdogInterval, on: .main, in: .common).autoconnect()
-    private var snapshot: CaptureSnapshot { capture.snapshot.forDisplay(at: now) }
+    private var snapshot: CaptureSnapshot { capture.snapshot.forDisplay() }
     private var geometry: RenderGeometry? {
         try? RenderGeometry(width: Double(viewportFrame.width), height: Double(viewportFrame.height),
                             scale: Double(displayScale), orientation: .portrait,

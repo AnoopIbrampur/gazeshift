@@ -44,6 +44,8 @@ public enum PlacementResult: Equatable, Sendable {
 public enum PlacementDefaults {
     // One measured p90 error is a provisional engineering gap, not a clinical usable-vision claim.
     public static let liveP90SafetyGapMultiplier = 1.0
+    // Zero extra engineering clearance for a fixed display region; bounds and overlap still reject.
+    public static let screenFixedSafetyGapPoints = 0.0
 }
 
 public enum PlacementPlanner {
@@ -72,7 +74,7 @@ public enum PlacementPlanner {
         guard userOffset.x.isFinite, userOffset.y.isFinite else { return .rejected(.invalidOffset) }
         guard let cameraSamplingBounds, validRectangle(cameraSamplingBounds) else { return .rejected(.invalidSamplingBounds) }
         guard let ellipse = try? region.screenFixedEllipse(geometry: geometry) else { return .rejected(.regionGeometryChanged) }
-        return plan(ellipse: ellipse, geometry: geometry, userOffset: userOffset, gap: 0,
+        return plan(ellipse: ellipse, geometry: geometry, userOffset: userOffset, gap: PlacementDefaults.screenFixedSafetyGapPoints,
                     cameraSamplingBounds: cameraSamplingBounds)
     }
 

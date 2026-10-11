@@ -35,7 +35,7 @@ The 360-minute budget below is an optimistic work allocation, not a guarantee or
 
 - [ ] Keep the reviewed ellipse fixed in display coordinates when the eyes or head move; remove eye-dependent runtime gates and controls.
 - [ ] Copy its enclosing rectangle from the original frame to the chosen offset. Show the source duplication and destination occlusion honestly.
-- [ ] Reject invalid image/view bounds and destination overlap with the region plus the named safety gap. Show “No valid placement — original view”; do not clamp or invent pixels.
+- [ ] Reject invalid image/view bounds and destination overlap with the region. The named fixed-region gap is zero extra engineering clearance. Show “No valid placement — original view”; do not clamp or invent pixels.
 - [ ] Preserve Original, Simulated blur and Simulated blur + copy using one frame/mask/viewport. Copy original pixels first and apply blur last. Normal Live assist remains unblurred.
 - [ ] Clear effects on stale/failed scene input and show “Scene unavailable” or “Paused”; do not label a frozen frame live. Check Stop/Retry and background/resume.
 - [ ] Run the relevant core checks and affected build; verify fixed-region placement, coordinate conversion, bounds/overlap, disabled-copy identity and original-before-blur behavior.

@@ -8,7 +8,7 @@ GazeShift is a working title for an experimental phone display tool: trace an as
 
 Use the front camera and Vision hand landmarks to pinch and trace one closed outline in the air. Review its min/max bounding ellipse as an explicit approximation, choose one copy offset, then switch the same ARSession to the rear scene. The reviewed region stays fixed in display coordinates; copy its enclosing rectangle from the original frame to the selected offset. Reject unavailable, overlapping or off-screen placements. The copy affects only the phone display and covers existing destination content.
 
-Actual camera-tracked air tracing remains required. Touch controls may operate Review, Redo and offset selection. Eye movement and head movement do not drive the region, and there is no gaze calibration or synthetic gaze input. Normal Live assist stays unblurred. Preserve the labeled, full-viewport Original / Simulated blur / Simulated blur + copy comparison, using original source pixels and applying blur last.
+Actual camera-tracked air tracing remains required. Touch controls may operate Review, Redo and offset selection. Eye movement and head movement do not drive the region, and there is no gaze calibration or synthetic gaze input. Accept region selects the labeled Simulated blur preview. Normal Live assist stays unblurred. Preserve the labeled, full-viewport Original / Simulated blur / Simulated blur + copy comparison, using original source pixels and applying blur last.
 
 Success means a playable recording of actual air tracing, explicit review, rear-scene copying and the three comparison modes on the physical phone. Gesture behavior, placement, source freshness and loss/recovery still need device verification; a build or launch cannot pass those gates.
 

@@ -212,7 +212,7 @@ struct CaptureSnapshot {
     var mainDelivery: CaptureMainDelivery? = nil
     /// Main-thread delivery can be delayed after capture validated a frame.
     /// Recheck every observation before an immutable update reaches the display.
-    func forDisplay(at now: TimeInterval) -> CaptureSnapshot {
+    func forDisplay(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> CaptureSnapshot {
         let staleScene = renderPacket.map { $0.identity.generation != generation || !$0.identity.isFresh(at: now) } ?? false
         let safePacket = staleScene ? nil : renderPacket
         let validEyes = safePacket != nil && eyes?.isValid == true && eyeIdentity.map { $0.generation == generation && $0.isFresh(at: now) } == true
