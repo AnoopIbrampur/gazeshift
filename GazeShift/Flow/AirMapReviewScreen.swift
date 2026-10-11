@@ -62,7 +62,8 @@ final class AirTraceModel: ObservableObject {
         if let region = reviewedRegion {
             let old = region.displayGeometry
             let sameDisplay = geometry.map { $0.width == old.width && $0.height == old.height
-                && $0.scale == old.scale && $0.orientation == old.orientation } == true
+                && $0.scale == old.scale && $0.orientation == old.orientation
+                && $0.viewingSetupID == old.viewingSetupID } == true
             if !sameDisplay || (!pendingRearReset && !retainedInRear && geometry != old) { interrupt() }
         }
         guard validateEligibility(), var current = flow else { return }
@@ -92,6 +93,14 @@ final class AirTraceModel: ObservableObject {
               gaze.geometry == region.displayGeometry else { interrupt(); return }
         flow = nil
         pendingRearReset = true
+    }
+
+    /// The accepted front region, activated for rear composition ONLY after the deliberate front→rear
+    /// switch of this session (`retainedInRear`). Core re-checks same size, scale, orientation and
+    /// physical setup ID; the rear mode still needs its own fresh calibration before gaze is used.
+    func rearRegion(for geometry: RenderGeometry?) -> ReviewedRegion? {
+        guard retainedInRear, let region = reviewedRegion, let geometry, geometry.mode == .rearLive else { return nil }
+        return try? region.retainedForModeTransition(to: geometry)
     }
 
     /// Stop, Retry, front restart, capture failure or a physical layout change clears all cached state.
