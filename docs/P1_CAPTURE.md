@@ -1,0 +1,30 @@
+# P1 — capture pipeline evidence
+
+The app now implements one ARKit session with two sequential modes: front face/image plus Vision hand landmarks, and rear world image plus user-face tracking. The UI has Front setup, Rear + eyes, Retry and Stop outside one measured portrait render rectangle. Raw face-relative lookAt/eye translations and explicit blink values are diagnostics; there is no calibrated screen-gaze marker, air trace or patch relocation in this phase.
+
+The camera uses CVMetalTextureCache and an MTKView to display the original full-range Y/CbCr image. Vision's lower-left/oriented points are converted through the inverse EXIF orientation, ARKit rotation/aspect crop and one deliberate front-preview mirror. The shader samples through the inverse of that same raw-image-to-display geometry.
+
+One synchronous Vision worker allows one request in flight and one replaceable newest pending frame. Both index and thumb tips need finite coordinates and provisional confidence≥0.5. A fresh completion can publish while a newer frame waits, avoiding starvation. Switching clears pending work while retaining in-flight ownership until it returns; obsolete-generation completions cannot restore state.
+
+Mode/layout/retry/pause/failure/interruption clears the image, eyes and cursor and advances a generation. Eyes come from the same ARFrame's anchors. Capture timestamps remain attached to observations; elapsed capture time is mapped to host monotonic time without assuming the clocks share an epoch. Results older than250ms are rejected. A callback-independent watchdog expires a stalled scene, including duplicate frames that cannot refresh its clock. A healthy scene with missing eyes remains the original image with an explicit tracking warning; source loss shows Scene unavailable/Paused. Recovery needs three distinct increasing fresh valid timestamps. `isTracked` is ARKit transform validity, not an invented gaze-confidence score.
+
+The optional host Metal compiler is absent. The shader source is bundled as a text resource and compiled once at renderer initialization with Apple's native `MTLDevice.makeLibrary(source:options:)`; initialization/conversion/GPU errors are explicitly surfaced. No compiler component was downloaded or installed.
+
+## Evidence and remaining gates
+
+- P0 actual-phone setup is verified on the authorized iPhone15ProMax/iOS27.0; see [preflight](PREFLIGHT.md). The earlier iPhone13 plan is not evidence about this different device.
+- Software:14 XCTest tests pass with zero failures. Native simulator and Personal-Team-signed device builds pass. The installed P1 app launches on the authorized physical phone. These results do not prove the camera pixels are correctly displayed.
+- Simulator: screenshot agent-inspected with markerP1-0.1-1011.15.22, portrait362×355pt render rectangle at3×, explicit sensor-unavailable status, no fake imagery/cursor/gaze and visible controls. Test-injected values stay inside the XCTest target. Simulator capture never runs ARSession and always reports camera/eye/hand tracking unavailable; it generates no fake sensor input.
+- **Not yet tested physically:** camera permission denial/retry; support flags; 30seconds of simultaneous fresh front image, eyes and both real fingertips at the intended stable close distance; asymmetric cursor left/right/top/bottom; finger motion without obscuring eyes; 30seconds of moving rear scene plus eye-only changes with the head still; switching back to front; missing hand/face, blinks, interruption and clean retry; actual GPU feed/color/crop/mirroring behavior.
+- Passing a build or software test does not pass these live-input gates, demonstrate gaze accuracy, establish a retinal map or prove clinical benefit. P2/P3 dependent physical gates remain pending.
+
+## Physical failure under investigation
+
+The coordinator directly observed the correct P1 screen on Anoop’s phone at390×414pt/3×portrait. Support flags for front face, rear world and rear face are all yes. The green camera indicator was visible, with Tracking unavailable—original view, a black camera rectangle and missing hand/eyes. This does not pass the sensor gate. An announced diagnostic rebuild uses explicit MTKView.draw() and bounded real rendering metadata to determine whether pixels, drawing or image geometry fail. After the user selected Front setup again, the black screen and missing tracking persisted. Agent-observed console diagnostics show continuous render draws,1440×1080 source,1170×1245 drawable, inverse centerUV(0.5,0.5), fresh frame age approximately3–70ms, no texture/GPU errors, and source center luma exactly16 across more than20seconds. The source may be dark/blocked; a center sample alone does not prove the entire image is black or establish the cause. Uncovered-front/bright-object and rear-camera comparisons are pending. The renderer scheduling hypothesis has not resolved the physical failure.
+
+## References
+
+- [Apple combined world and user face tracking](https://developer.apple.com/documentation/arkit/combining-user-face-tracking-and-world-tracking)
+- [Apple ARFrame display transform](https://developer.apple.com/documentation/arkit/arframe/displaytransform(for:viewportsize:))
+- [Apple Vision hand-pose request](https://developer.apple.com/documentation/vision/vndetecthumanhandposerequest)
+- [Apple Metal function/library creation](https://developer.apple.com/library/archive/documentation/Miscellaneous/Conceptual/MetalProgrammingGuide/Prog-Func/Prog-Func.html)

@@ -1,12 +1,12 @@
 # P0 preflight — 2026-10-11
 
-**Current result: physical P0 pending; simulator implementation authorized.** Xcode license and first-launch checks pass. The user signed in and the intended **Personal Team** is verified; personal device provisioning remains untested. An active USB iPhone is observed, but pairing and a physical run destination remain unresolved. The user explicitly directed coding with simulator verification while phone setup is pending. A minimal native starter app now exists; no camera or eye tracking is active.
+**Current result: physical P0 signed launch and screen verification passed.** Xcode/tooling and Personal Team signing are verified. The user authorized Anoop Ibrampur’s paired **iPhone 15 Pro Max, iOS 27.0** for testing. The exact installed app launched successfully after the user reported its developer profile Verified; the coordinator directly observed the expected marker and measured portrait viewport in DeviceHub. Sensor behavior, comfortable close viewing distance and lighting remain untested. P1 implementation is underway on its own feature branch.
 
 The maintained requirements are [BUILD_PROMPTS.md](../BUILD_PROMPTS.md), [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md) and [SIX_HOUR_PLAN.md](../SIX_HOUR_PLAN.md). This record adds evidence, not new product scope.
 
 ## Evidence snapshot
 
-Fresh local checks began **2026-10-11 14:19:05 EDT**. Repository and public certificate metadata were refreshed in the same preflight pass. All rows below are **agent-observed** unless marked otherwise. The continuation below records newer user reports and account/device checks; no actual-device app pass is recorded.
+Fresh local checks began **2026-10-11 14:19:05 EDT**. Repository and public certificate metadata were refreshed in the same preflight pass. All rows below are **agent-observed** unless marked otherwise. The rows in this initial snapshot are historical. The latest physical continuation below supersedes device/signing/launch status.
 
 | Check | Result | Gate implication |
 | --- | --- | --- |
@@ -55,3 +55,12 @@ The user explicitly authorized immediate coding and simulator verification while
 | Physical / sensor gates | Signed actual-iPhone install, visible marker, physical geometry/distance/lighting, capture, calibration, gaze, rendering and recording: **not tested**. |
 
 The simulator screenshot and detailed command/hash evidence are retained in the ignored plan workspace. The build emitted one AppIntents metadata warning because this static app has no AppIntents dependency; no native compile errors occurred. Overall setup duration and the event timer remain unknown. Physical P0 has not passed. Later implementation may continue under the user's override, with all physical proof still pending.
+
+
+## Physical checkpoint — Anoop’s authorized phone
+
+- **Agent-observed native tools:** available physical iPhone 15 Pro Max, iOS27.0(24A437); signed P0 build succeeds, expected Personal Team signature verifies, exact app installs. No device identifiers, certificates or signing material are stored here.
+- First launch was denied by the device security/profile-trust check. **User-reported:** developer app profile now shows Verified. The same installed binary then launches successfully, exit0/process888.
+- **Agent-observed by coordinator in live DeviceHub mirror:** marker **P0-0.1-1011.14.52**, portrait viewport **382×510pt**, display scale **3×**. This is actual-phone screen evidence, not a simulator screenshot.
+- P0's app commits passed fresh independent specification and quality review before no-ff integration. Merged build succeeds; pushed main and live remote SHA match **14fd2d2a90897b0f04b65ebbf33082d058df376f**. Repository privacy and unavailable plan-level branch enforcement were preserved.
+- Overall setup duration/event timer remain unknown. Stable seated distance, lighting and simultaneous front eyes/fingers must be checked in P1; no sensor, calibrated-gaze, image-copy, clinical or recording claim follows from P0.
