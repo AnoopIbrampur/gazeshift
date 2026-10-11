@@ -29,6 +29,18 @@ public struct NormalizedHandInput: Sendable {
     }
 }
 
+/// Active index-only input, paired to its real source frame before any point is recorded.
+public struct NormalizedIndexInput: Sendable {
+    public let frame: CaptureFrameKey
+    public let captureTime: Double
+    public let indexTip: ScreenPoint
+    public let indexConfidence: Double
+    public init(frame: CaptureFrameKey, captureTime: Double, indexTip: ScreenPoint, indexConfidence: Double) {
+        self.frame = frame; self.captureTime = captureTime
+        self.indexTip = indexTip; self.indexConfidence = indexConfidence
+    }
+}
+
 /// Bounded per-frame store of calibrated gaze so a later Vision completion can find the gaze
 /// from its own frame. Vision finishes after the eyes for the same ARFrame are known.
 public struct AirTracePairer: Sendable {
@@ -112,9 +124,35 @@ public struct AirTraceFlow: Sendable {
     public mutating func recordSource(frame: CaptureFrameKey, captureTime: Double, now: Double,
                                       geometry: RenderGeometry) {
         session.observeSource(captureTimestamp: captureTime, generation: frame.generation, now: now, geometry: geometry)
-        guard state == .ready || state == .tracing, frame.generation == session.captureGeneration else { return }
+        guard state == .ready || state == .armed || state == .tracing,
+              frame.generation == session.captureGeneration else { return }
         if sourceByFrame.updateValue(captureTime, forKey: frame) == nil { sourceArrival.append(frame) }
         while sourceArrival.count > AirTracePairer.retainedFrames { sourceByFrame[sourceArrival.removeFirst()] = nil }
+    }
+
+    public mutating func startDrawing(at now: Double, geometry: RenderGeometry) {
+        guard state == .ready else { return }
+        resetInputs()
+        session.startDrawing(at: now, geometry: geometry)
+    }
+
+    public mutating func indexResult(_ index: NormalizedIndexInput?, frame: CaptureFrameKey,
+                                     captureTime: Double, now: Double, geometry: RenderGeometry) {
+        let sourceTime = sourceByFrame.removeValue(forKey: frame)
+        sourceArrival.removeAll { $0 == frame }
+        let sample = index.flatMap { input -> AirTraceIndexSample? in
+            guard input.frame == frame, input.captureTime == sourceTime,
+                  input.captureTime == captureTime else { return nil }
+            return AirTraceIndexSample(indexTip: AirTracePairer.viewPoint(input.indexTip, geometry),
+                indexConfidence: input.indexConfidence, captureTimestamp: input.captureTime,
+                generation: frame.generation)
+        }
+        session.consumeIndex(sample, captureTimestamp: captureTime, now: now, geometry: geometry)
+    }
+
+    public mutating func finishDrawing(now: Double, geometry: RenderGeometry) {
+        session.finishDrawing(now: now, geometry: geometry)
+        if state != .tracing && state != .armed { resetInputs() }
     }
 
     public mutating func handOnlyResult(_ hand: NormalizedHandInput?, frame: CaptureFrameKey,

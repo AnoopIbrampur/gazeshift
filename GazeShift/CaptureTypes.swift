@@ -138,9 +138,10 @@ struct HandObservation {
     let identity: FrameIdentity
     /// Canonical normalized display coordinates, origin at top left.
     let indexTip: CGPoint
-    let thumbTip: CGPoint
+    /// Optional legacy metadata; index-only capture does not request a thumb.
+    let thumbTip: CGPoint?
     let indexConfidence: Float
-    let thumbConfidence: Float
+    let thumbConfidence: Float?
 }
 
 /// Ordered sensing events, separate from display snapshots and their freshness filtering.

@@ -514,8 +514,6 @@ struct ContentView: View {
                 if snapshot.mode == .setupFront, let hand = snapshot.hand {
                     Circle().fill(.yellow).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
                         .position(x: hand.indexTip.x * measured.size.width, y: hand.indexTip.y * measured.size.height)
-                    Circle().stroke(.yellow, lineWidth: 2).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
-                        .position(x: hand.thumbTip.x * measured.size.width, y: hand.thumbTip.y * measured.size.height)
                 }
                 if let geometry { AirMapOverlay(model: airTrace, geometry: geometry) }
                 if let composition, compositeFailure == nil { compositionOutline(composition.plan) }
@@ -566,6 +564,14 @@ struct ContentView: View {
         guard snapshot.mode == .setupFront else { return "Trace with Front setup, then switch to Rear scene" }
         guard snapshot.status == .ready, snapshot.renderPacket != nil else { return "Waiting for a live front camera" }
         guard geometry != nil else { return "Waiting for the measured display" }
+        guard let hand = snapshot.hand, hand.identity.generation == snapshot.generation,
+              hand.identity.isFresh(at: ProcessInfo.processInfo.systemUptime),
+              hand.indexConfidence.isFinite,
+              (CaptureLimits.minimumHandJointConfidence...1).contains(hand.indexConfidence),
+              hand.indexTip.x.isFinite, hand.indexTip.y.isFinite,
+              (0...1).contains(hand.indexTip.x), (0...1).contains(hand.indexTip.y) else {
+            return "Show your index finger in the camera, then tap Start drawing"
+        }
         return nil
     }
 

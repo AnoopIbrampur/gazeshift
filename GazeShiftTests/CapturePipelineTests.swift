@@ -55,6 +55,25 @@ final class CapturePipelineTests: XCTestCase {
         XCTAssertEqual(stale.status, .sceneUnavailable)
         XCTAssertNil(stale.renderPacket)
     }
+    // Break caught: a valid index result is discarded because the thumb is absent.
+    func testFreshIndexOnlyHandSurvivesDisplayWithoutThumb() throws {
+        var image: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 2, 2, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &image), kCVReturnSuccess)
+        let id = identity(1)
+        let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 400),
+                                                     displayTransform: .identity, orientation: .up, mirrored: false))
+        let packet = RenderPacket(identity: id, image: try XCTUnwrap(image), geometry: geometry, mode: .setupFront)
+        let hand = HandObservation(identity: id, indexTip: CGPoint(x: 0.2, y: 0.3), thumbTip: nil,
+                                   indexConfidence: 0.9, thumbConfidence: nil)
+        let snapshot = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready,
+                                       support: nil, renderPacket: packet, eyes: nil, eyeIdentity: nil,
+                                       hand: hand, handMessage: "Index cursor active")
+        let displayed = try XCTUnwrap(snapshot.forDisplay(at: 10.1).hand)
+        assertPoint(displayed.indexTip, CGPoint(x: 0.2, y: 0.3))
+        XCTAssertEqual(displayed.indexConfidence, 0.9)
+        XCTAssertNil(displayed.thumbTip)
+        XCTAssertNil(displayed.thumbConfidence)
+    }
     // Break caught: world-space face pose, or the wrong multiplication order, is reported as camera-relative.
     func testFaceCameraPoseUsesSameFrameInverseCameraTimesFaceAndRejectsInvalidMatrices() throws {
         let camera = simd_float4x4(columns: (SIMD4(0, 1, 0, 0), SIMD4(-1, 0, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(1, 2, 3, 1)))

@@ -793,22 +793,29 @@ final class ManualAirTraceModelTests: XCTestCase {
     private func geometry(_ mode: TrackingMode = .frontSetup, setup: String = "fixed-display") throws -> RenderGeometry {
         try RenderGeometry(width: 300, height: 400, scale: 3, orientation: .portrait, mode: mode, viewingSetupID: setup)
     }
-    private func model() throws -> AirTraceModel {
+    private func model(start: Bool = true) throws -> AirTraceModel {
         let model = AirTraceModel()
         model.attach(events: events)
         model.layout(CGRect(x: 0, y: 0, width: 300, height: 400), scale: 3)
-        model.begin(geometry: try geometry(), generation: 1)
+        if start { model.begin(geometry: try geometry(), generation: 1) }
         return model
     }
-    private func frame(_ index: Int, point: CGPoint? = nil, release: Bool = false,
-                       handPresent: Bool = true, confidence: Float = 0.9) {
-        let time = ProcessInfo.processInfo.systemUptime
-        let identity = FrameIdentity(generation: 1, captureTimestamp: 5000 + Double(index), receivedAt: time)
+    // Break caught: opening a drawing attempt silently waits for a thumb pinch instead of arming.
+    func testExplicitStartArmsWithoutSeedingCursorHistory() throws {
+        let model = try model()
+        XCTAssertEqual(model.flow?.state, .armed)
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+        XCTAssertNil(model.reviewedRegion)
+    }
+    private func frame(_ index: Int, point: CGPoint? = nil,
+                       handPresent: Bool = true, confidence: Float = 0.9,
+                       generation: UInt64 = 1, capturedAt: Double? = nil) {
+        let time = capturedAt ?? ProcessInfo.processInfo.systemUptime
+        let identity = FrameIdentity(generation: generation, captureTimestamp: 5000 + Double(index), receivedAt: time)
         let angle = 2 * Double.pi * Double(index % 24) / 24
         let tip = point ?? CGPoint(x: (120 + 30 * cos(angle)) / 300, y: (140 + 20 * sin(angle)) / 400)
         let hand = HandObservation(identity: identity, indexTip: tip,
-            thumbTip: CGPoint(x: tip.x + (release ? 60.0 : 1.0) / 300, y: tip.y),
-            indexConfidence: confidence, thumbConfidence: confidence)
+            thumbTip: nil, indexConfidence: confidence, thumbConfidence: nil)
         events.send(.source(identity: identity, mode: .setupFront))
         events.send(.eyes(nil, identity: identity, mode: .setupFront))
         events.send(.hand(.success(handPresent ? hand : nil), identity: identity, mode: .setupFront))
@@ -816,7 +823,9 @@ final class ManualAirTraceModelTests: XCTestCase {
     private func accepted() throws -> AirTraceModel {
         let model = try model()
         for index in 0..<24 { frame(index) }
-        frame(24, release: true)
+        frame(24)
+        XCTAssertEqual(model.flow?.state, .tracing)
+        model.finish()
         XCTAssertEqual(model.flow?.state, .candidateReady)
         model.accept()
         XCTAssertNotNil(model.reviewedRegion)
@@ -830,6 +839,53 @@ final class ManualAirTraceModelTests: XCTestCase {
         let ellipse = try XCTUnwrap(model.reviewedRegion).screenFixedEllipse(geometry: geometry())
         XCTAssertEqual(ellipse.center.x, 120, accuracy: 1e-6)
         XCTAssertEqual(ellipse.center.y, 140, accuracy: 1e-6)
+    }
+
+    // Break caught: ordinary motion or a late pre-Start inference enters the intentional outline.
+    func testLiveMovementAndDelayedPreStartResultDoNotDraw() throws {
+        let model = try model(start: false)
+        for index in 0..<24 { frame(index) }
+        XCTAssertNil(model.flow)
+        XCTAssertNil(model.reviewedRegion)
+        let oldCapture = ProcessInfo.processInfo.systemUptime
+        model.begin(geometry: try geometry(), generation: 1)
+        frame(24, capturedAt: oldCapture)
+        XCTAssertEqual(model.flow?.state, .armed)
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+        frame(25)
+        XCTAssertEqual(model.flow?.state, .tracing)
+        XCTAssertEqual(model.flow?.rawTrace.count, 1)
+    }
+
+    // Break caught: Finish auto-accepts or camera/hand loss after Finish erases the review candidate.
+    func testFinishFreezesShapeUntilAccept() throws {
+        let model = try model()
+        for index in 0...24 { frame(index) }
+        model.finish()
+        XCTAssertEqual(model.flow?.state, .candidateReady)
+        let points = model.flow?.rawTrace
+        XCTAssertNil(model.reviewedRegion)
+        frame(25, handPresent: false)
+        model.tick(now: ProcessInfo.processInfo.systemUptime + 1, geometry: try geometry())
+        XCTAssertEqual(model.flow?.state, .candidateReady)
+        XCTAssertEqual(model.flow?.rawTrace, points)
+        XCTAssertNil(model.reviewedRegion)
+        model.accept()
+        XCTAssertNotNil(model.reviewedRegion)
+    }
+
+    // Break caught: Retry keeps the old generation, so a new intentional attempt can never record.
+    func testNewStartAfterCaptureResetUsesCurrentGeneration() throws {
+        let model = try model()
+        frame(0)
+        events.send(.reset(generation: 2, mode: .setupFront))
+        model.begin(geometry: try geometry(), generation: 2)
+        frame(1, generation: 1) // Late result from the preceding AR session is ignored.
+        XCTAssertEqual(model.flow?.state, .armed)
+        frame(2, generation: 2)
+        XCTAssertEqual(model.flow?.state, .tracing)
+        XCTAssertEqual(model.flow?.rawTrace.count, 1)
+        XCTAssertEqual(model.flow?.session.captureGeneration, 2)
     }
 
     // Break caught: invalid hand data or silence is bridged by the next good callback.

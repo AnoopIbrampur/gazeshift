@@ -8,17 +8,18 @@ Use this document and [SIX_HOUR_PLAN.md](SIX_HOUR_PLAN.md) as the maintained spe
 - Repository: [Hussain-coder-eng/gazeshift](https://github.com/Hussain-coder-eng/gazeshift), private.
 - On 2026-10-11, baseline `5876905` was built, installed and launched on a physical **iPhone 15 Pro Max** before pivot edits. The user also reported “Camera opens; ready for new version.” The original plan named an iPhone 13; that was not the deployment device for this evidence.
 - The earlier “documentation only” and pending-Xcode-license notes are historical. Baseline deployment succeeded; do not carry those notes forward as current blockers or infer that every setup condition is guaranteed for a future run.
-- The user explicitly pivoted completely away from eye tracking while retaining finger-in-air tracing. Manual-flow implementation is in progress and awaits physical-device verification of gestures and end-to-end operation.
+- The manual no-eye-tracking pivot is merged. Prior thumb/pinch build `1011.18.10` was installed, but the user reported that a physical tracing attempt produced no line and failed. No successful end-to-end phone demo has been verified.
+- The user now explicitly requires **index finger only**, with no thumb/pinch. This update is in progress and awaits physical-device verification; the prior installation does not prove the new runtime behavior.
 
 ## Current scope
 
 Build a manual screen-space approximation:
 
-**Front image → Vision index/thumb landmarks → pinch air trace → reviewed bounding ellipse → chosen copy offset → rear original image → fixed display region and translated rectangular copy.**
+**Front image → Start drawing → Vision index-only air trace and accumulating outline → Finish shape → candidate ellipse review → Accept region → chosen copy offset → rear original image → fixed display region and translated rectangular copy.**
 
-The region stays fixed in display coordinates after review. It does not follow the eyes, head or a retinal defect. Remove runtime eye estimates, gaze calibration, gaze validation and gaze-driven placement; do not replace them with synthetic gaze. Actual camera-tracked air tracing remains essential. Touch may operate Review, Redo and offset controls, not silently replace tracing.
+The region stays fixed in display coordinates after review. It does not follow the eyes, head or a retinal defect. Remove runtime eye estimates, gaze calibration, gaze validation and gaze-driven placement; do not replace them with synthetic gaze. Actual camera-tracked air tracing remains essential. Touch operates Start drawing, Finish shape, Accept region, Redo and offset controls, not the drawn outline.
 
-Use one continuous closed stroke and review the min/max bounding ellipse derived from it. The ellipse loses irregular outline details and represents an assumed region, not a diagnosed defect. Keep trace and region data in session memory. Choose one explicit copy offset; do not auto-clamp, shrink or search for a different placement.
+Start drawing explicitly arms recording; ordinary movement before Start creates no shape. Draw one continuous closed loop using only the index finger, with a visible accumulating outline. Return to the start and keep the index visible while the other hand taps Finish shape. Finish freezes a valid candidate for review; it does not accept the region. Review the raw outline and min/max bounding ellipse, then separately use Accept region to commit it. The ellipse loses irregular outline details and represents an assumed region, not a diagnosed defect. Keep trace and region data in session memory. Choose one explicit copy offset; do not auto-clamp, shrink or search for a different placement.
 
 ## Technical path
 
@@ -26,7 +27,7 @@ Reuse the existing native Swift, SwiftUI, ARKit, Vision and Metal implementation
 
 Use the same ARSession sequentially. Front setup retains supported `ARFaceTrackingConfiguration` solely as the camera-frame source for `VNDetectHumanHandPoseRequest`; its name does not mean eye or face estimates drive the app. Rear mode uses `ARWorldTrackingConfiguration` with `userFaceTrackingEnabled = false`. Do not start competing capture sessions or require simultaneous front/rear video.
 
-Vision supplies a virtual 2D cursor from hand landmarks, not a 3D pointing ray. Verify orientation, viewport crop, front mirroring and y-axis conversion on the phone. Only fresh, valid hand samples may form the outline. Hand loss, stale data, occlusion or a broken stroke must invalidate the stroke and require Redo rather than joining gaps. Clear transient frame/hand state at a camera switch and require fresh rear imagery before displaying effects.
+Vision supplies a virtual 2D cursor from hand landmarks, not a 3D pointing ray. Verify orientation, viewport crop, front mirroring and y-axis conversion on the phone. Keep existing validation: a closed loop, nonzero area and at least 20 distinct points. Only fresh, confident, finite, in-bounds index samples matched to their source frame and session generation may form the outline; source-identity checks remain unchanged. Thumb visibility or pinch distance must not gate drawing. Hand loss, stale data, occlusion or a broken stroke must invalidate the stroke and require Redo rather than joining gaps. Clear transient frame/hand state at a camera switch and require fresh rear imagery before displaying effects.
 
 Copy the enclosing rectangle from the original unblurred frame. Source and destination must fit valid image/view bounds, and destination must avoid the approximate region. The named screen-fixed safety gap is zero extra engineering clearance; bounds and overlap checks still apply. It is not a fabricated gaze-error margin or evidence of usable peripheral vision. Invalid placement shows “No valid placement — original view” and bypasses the copy. Never recursively sample an earlier copy, clamp partial source pixels, invent content or introduce a full-scene warp.
 
