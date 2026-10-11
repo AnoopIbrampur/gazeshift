@@ -1,87 +1,60 @@
 # GazeShift Six-Hour Implementation Plan
 
-> **For agentic workers:** Use `superpowers:subagent-driven-development` after implementation is requested. Follow the complete copyable prompts and exact evidence gates in [BUILD_PROMPTS.md](BUILD_PROMPTS.md); this is the concise schedule.
+> **For agentic workers:** Use `superpowers:subagent-driven-development` for implementation and the Gang's write-path agent on feature branches. This plan and [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) supersede the gaze requirements in historical [BUILD_PROMPTS.md](BUILD_PROMPTS.md).
 
-**Goal:** Record actual camera-tracked air tracing followed by live eyes driving one original-image patch copy on an iPhone 13.
+**Goal:** Record actual camera-tracked air tracing, reviewed ellipse placement and one original-image copy on the physical iPhone 15 Pro Max. No eye tracking or gaze calibration.
 
-**Architecture:** Reconfigure one ARSession between Setup/map and Live assist. Setup uses front imagery, face/eye estimates and Vision hand landmarks. The user traces one closed outline in the air while fixating a fixed reference, then reviews a bounding ellipse as an explicit approximation. Live mode uses the rear scene plus face anchors, a fresh gaze calibration and one rectangular copy at a chosen offset. No full-scene radial warp.
+**Architecture:** Reconfigure one ARSession from front-camera hand tracing to the rear scene. The reviewed ellipse stays fixed in display coordinates; a user-selected offset positions its rectangular copy. Reuse Swift, SwiftUI, ARKit, Vision and the existing Metal renderer.
 
-**Tech stack:** Swift, SwiftUI controls, ARKit, Vision hand-pose detection, and one minimal native renderer. No new pretrained model or backend.
+**Status:** Baseline `5876905` was built, installed and launched on this phone before pivot edits on 2026-10-11. The user reported that the baseline camera opens. The manual flow is in progress and awaits physical-device verification. A launch proves deployment only. The original iPhone 13 and pending-license setup notes are historical.
 
-**Spec:** [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md); detailed implementation prompts in [BUILD_PROMPTS.md](BUILD_PROMPTS.md).
+The 360-minute budget below is an optimistic work allocation, not a guarantee or a statement of time remaining. Setup or signing problems during the build consume that budget.
 
 ## Global constraints
 
-- Documentation only; no app exists. Implementation starts only when requested.
-- Six hours is optimistic and conditional on tooling/device readiness. Setup during an event consumes the same six-hour window. Air gestures and recalibration increase risk.
-- The user resolves the known unaccepted Xcode license, signing and device trust; do not accept licenses or install Mac applications on their behalf.
-- One ARSession, sequential supported configurations: front `ARFaceTrackingConfiguration` for hand+face setup, then world tracking with `userFaceTrackingEnabled` for rear image+face anchors. No competing capture sessions or invented raw front buffer in world mode.
-- `lookAtPoint` is face-relative. Calibrate physical-display gaze in each mode and pass P2's held-out fixed-window coverage/error gates, including after the switch.
-- Air tracing is required. Touch Review/Redo controls are allowed; touchscreen drawing, head pose or scripted gaze cannot replace the requested inputs.
-- A user-drawn approximate ellipse is not a retinal measurement. Preserve its fixation-relative center offset; no patient diagnosis, PRL inference, independent per-eye map or promised benefit.
-- Normal Live assist has no artificial blur. Required Demo comparison offers Original / Simulated blur / Simulated blur + copy in identical full-viewport geometry; simulation stays off until selected, uses original source pixels and applies blur last.
-- Source/destination must fit valid image/view bounds; destination must clear the approximate region and an error-based safety gap. Invalid placement bypasses to original, never clamps or invents content.
-- Keep geometry, pose and distance stable; changes invalidate calibration/region. Copied content moves with gaze and may move when looked at; this is a peripheral-viewing experiment.
-- No accounts, cloud frame upload, hardware purchase, clinical participants or feature expansion. Local prerecorded scene fallback must be labeled and retain real air tracing/live gaze.
-- Gang write-path agent, feature branches, verified checkpoints and independent Superpowers review before merge/push. Keep secrets and large recordings out of Git.
+- Actual finger-in-air tracing remains required; touch may operate Review, Redo and copy-offset controls.
+- No runtime eye estimates, gaze calibration, synthetic gaze or gaze-driven movement. The manual region cannot track a retinal blind spot.
+- One ARSession: front `ARFaceTrackingConfiguration` for camera frames only, then rear world tracking with `userFaceTrackingEnabled = false`.
+- Preserve bounds/overlap rejection, original-image sampling, blur-last ordering and hand/scene freshness.
+- Normal Live assist stays unblurred. Preserve labeled Original / Simulated blur / Simulated blur + copy in identical full-viewport geometry.
+- No new dependencies, backend, cloud frame upload, hardware purchases, new diseases or clinical calibration.
+- Keep the repository private, historical diagnostics intact, secrets/large recordings out of Git, and independent review before merge/push.
 
-## Preflight — P0
+## 0–90 minutes — manual input and camera switch
 
-- [ ] Resolve user-controlled setup, verify signing and launch the minimal app on the actual phone.
-- [ ] Record actual setup time, device/iOS, chosen orientation, viewport and evidence provenance.
-- [ ] Preserve repository protections and unrelated work; report unavailable protection rather than bypassing it.
+- [ ] Build the pivot and launch it on the actual phone; record device/iOS, commit, orientation and evidence provenance.
+- [ ] Show fresh front imagery and an actual Vision index/thumb cursor; verify orientation, crop, y-flip and front mirroring.
+- [ ] Pinch to trace one continuous closed outline, return to its start and release. Reject insufficient, open, zero-area, nonfinite or out-of-viewport traces.
+- [ ] Reject broken strokes after hand loss, occlusion or stale samples; require Redo rather than joining missing points.
+- [ ] Review the raw outline and its bounding ellipse explicitly; preserve the chosen screen position and one selected copy offset.
+- [ ] Switch the same session to rear capture, clear transient frame/hand state and prove fresh scene frames without eye-tracking data.
 
-## P1 — configuration and sensor proof (minutes 0–30)
+**Go/no-go:** Actual air tracing, explicit review and fresh rear imagery must work on the phone. No simulator, touchscreen stroke or successful build substitutes for this gate.
 
-- [ ] Prove front image, face/eye data and actual Vision index/thumb landmarks concurrently; display a timestamped 2D air cursor.
-- [ ] Test one image-to-display transform for orientation, crop, y-flip and front mirroring; no double transformation.
-- [ ] Use one in-flight hand request, newest frames and confidence/staleness rejection; verify finger motion does not hide the eyes.
-- [ ] Reconfigure the same session to rear+face tracking; clear old state and prove fresh scene/eye data. Return to front setup for P2.
-- [ ] Record support/results and commit. Hand or eye failure blocks the requested build; rear-only failure may use labeled local recorded input.
+## 90–210 minutes — fixed-region copy and comparison
 
-## P2 — front-mode calibrated gaze (minutes 30–90)
+- [ ] Keep the reviewed ellipse fixed in display coordinates when the eyes or head move; remove eye-dependent runtime gates and controls.
+- [ ] Copy its enclosing rectangle from the original frame to the chosen offset. Show the source duplication and destination occlusion honestly.
+- [ ] Reject invalid image/view bounds and destination overlap with the region plus the named safety gap. Show “No valid placement — original view”; do not clamp or invent pixels.
+- [ ] Preserve Original, Simulated blur and Simulated blur + copy using one frame/mask/viewport. Copy original pixels first and apply blur last. Normal Live assist remains unblurred.
+- [ ] Clear effects on stale/failed scene input and show “Scene unavailable” or “Paused”; do not label a frozen frame live. Check Stop/Retry and background/resume.
+- [ ] Run the relevant core checks and affected build; verify fixed-region placement, coordinate conversion, bounds/overlap, disabled-copy identity and original-before-blur behavior.
 
-- [ ] Fit nine-target personal calibration in physical display coordinates.
-- [ ] Test four novel quarter positions twice using P2's fixed 1-second windows, 20 scheduled slots, >=80% valid coverage and >=10 distinct timestamps per target/pass; report rejected counts/reasons.
-- [ ] Keep finite off-screen estimates in error scoring; report median/p90 aggregate and per target/pass against predeclared thresholds. Center repeats are separate controls.
-- [ ] Demonstrate eye-only movement with the head still; reject blinking/stale/nonfinite samples without inventing confidence.
-- [ ] Run relevant checks/build, commit and stop. **Minute-90 gate:** all setup gaze criteria pass before air mapping.
+## 210–300 minutes — physical-device challenges
 
-## P3 — air outline, review and live-mode validation (minutes 90–150)
+- [ ] Exercise the complete trace → review → offset → rear-scene flow and Redo/repeated switching.
+- [ ] Test hand loss, pinch release, broken/open strokes, image edges, invalid placement and source failure/recovery.
+- [ ] Confirm eye movement does not move the reviewed region or patch and no eye calibration is required.
+- [ ] Verify a distinctive source object is copied intact; Original removes the effect; all three comparison modes keep identical geometry and clear labels.
+- [ ] Measure actual frame/update rates, processing time and sample age only if instrumentation is available; do not call sample age end-to-end latency.
+- [ ] Record pass/fail/not-tested and agent-observed/user-reported provenance. Fix the highest-impact failures and rerun their specific checks.
 
-- [ ] Fixate the stationary reference, pinch to trace one closed outline in the air, return to its start and release. Drift, occlusion or missing data invalidates the whole stroke; require Redo.
-- [ ] Reject nonfinite/out-of-viewport, insufficient, open or zero-area traces; never invent missing boundary points.
-- [ ] Show raw outline and its min/max bounding ellipse for explicit review. Store center offset from fixation, radii and setup metadata in session memory; preserve the offset, not irregular shape details.
-- [ ] Reconfigure the same session, clear old anchors/timestamps/hand results and calibration validity, and prove fresh rear scene/eye samples.
-- [ ] Refit and repeat ALL P2 gaze criteria in the actual live layout. If using the recorded-scene fallback, validate that final layout too.
-- [ ] Verify mapping/switching math and on-device behavior, commit and stop. **Minute-150 gate:** actual air map, explicit review and final-mode gaze validation pass before relocation.
+## 300–360 minutes — evidence, review and integration
 
-## P4 — original-image patch copy (minutes 150–210)
+- [ ] Record actual air tracing, explicit review, chosen offset, rear-scene copying, all three comparison modes and visible failure/recovery. Include an external hand view when possible.
+- [ ] Open the saved recording and verify playback and visible behavior; record its location, device and build/commit. Label any prerecorded scene fallback while retaining live air tracing.
+- [ ] Prepare an honest pitch: manual screen approximation, duplicate/occluded content, no retinal tracking, no diagnosis or demonstrated patient benefit. Future benefit needs comparison with magnification.
+- [ ] Commit and obtain independent Superpowers review of final BASE/HEAD; fix all Critical/Important findings, rerun affected checks and re-review before permitted merge/push. Verify remote state.
+- [ ] Report every unfinished device, comparison, recording, review or integration gate. Do not turn a build or launch into an end-to-end success claim.
 
-- [ ] Position the reviewed ellipse at gaze plus its stored fixation-relative offset; take its enclosing rectangular crop from the original current frame.
-- [ ] Copy it to one user-chosen offset over the original scene. Explain source duplication, destination occlusion and gaze-chasing limitations.
-- [ ] Require valid in-bounds source and destination; conservatively reject destination overlap with the region plus the live-error safety gap. Show “No valid placement — original view” on rejection.
-- [ ] On invalid gaze, clear marker/copy and show “Tracking unavailable — original view” over a healthy source until three distinct fresh valid samples recover. A stalled scene instead shows “Scene unavailable” or “Paused”.
-- [ ] Implement all three required Demo comparison views with the same frame/mask/viewport; copy before blur and blur last. Live calibrated gaze must move simulated region and patch together with shared loss/recovery. Frozen comparison is supplementary only. Normal Live assist stays unblurred.
-- [ ] Check offset preservation, source-before-blur/output, coordinate transforms, disabled-copy identity, bounds/overlap and loss/recovery. Commit the verified checkpoint.
-
-## P5 — real-device verification (minutes 210–300)
-
-- [ ] Repeat P2 coverage/error gates and drift tests in live mode; keep all insufficient windows and off-screen errors in the report.
-- [ ] Challenge air-trace fixation drift, hand/face occlusion, incomplete strokes, switching, layout/distance changes, edge placements and stale/invalid data.
-- [ ] Verify separate source failure, gaze loss, placement failure and recovery; no stale copied patch or frozen frame labeled live.
-- [ ] Verify live eye-only movement drives simulated blur and copy together and both clear/recover; static comparison cannot pass this requirement.
-- [ ] Measure actual frame/update rates, processing time and sample age without calling them end-to-end latency.
-- [ ] Record agent-observed, user-reported and not-tested results separately; fix the highest-impact failures, rerun affected checks and commit.
-
-## P6 — evidence, review and integration (minutes 300–360)
-
-- [ ] Record actual air tracing/fixation, ellipse review, camera-switch/calibration results, live eye-only relocation, all three required comparison views and failure/recovery. Include live eyes moving simulated blur and patch together; labeled frozen comparisons cannot replace that evidence.
-- [ ] Verify the saved recording plays; use an external hand/eye view when possible. Keep assumed-region and recorded-source labels visible; no regenerated evidence.
-- [ ] Prepare an honest pitch covering the technical result, approximation, duplication/occlusion/gaze-chasing limits and future comparison with magnification.
-- [ ] Commit and obtain independent review of final BASE/HEAD; resolve all Critical/Important findings before permitted merge/push and verify remote state.
-- [ ] Report any missing required blur comparison, device test, recording, review or integration gate at minute 360; do not cut scope silently. A build alone does not prove either requested live input.
-
-## After the hackathon
-
-Clinical scotoma/PRL mapping, separate-eye/binocular needs, fixation reliability, wearable hardware and patient benefit require separate validation. Participant access and partnerships are unconfirmed. Vercel may host an optional later companion page; it is not the native tracking runtime.
+Clinical vision mapping, PRL/binocular validation, wearable hardware and patient benefit remain separate research. Participant access and partnerships are unconfirmed. A companion website is outside this build.

@@ -1,73 +1,55 @@
 # GazeShift — project context
 
-Use this document as durable context for the ChatGPT project and future implementation work. Read it with [SIX_HOUR_PLAN.md](SIX_HOUR_PLAN.md) and the authoritative phase instructions in [BUILD_PROMPTS.md](BUILD_PROMPTS.md).
+Use this document and [SIX_HOUR_PLAN.md](SIX_HOUR_PLAN.md) as the maintained specification. [BUILD_PROMPTS.md](BUILD_PROMPTS.md) and the diagnostic reports under `docs/` preserve the superseded gaze experiment; their eye-tracking requirements do not govern the manual pivot.
 
 ## Current state and owner
 
-- Working title: **GazeShift**.
-- Owner: a solo Penn State AI Engineering student, using an iPhone 13 and a Mac/laptop with a limited hardware budget.
-- Repository: https://github.com/Hussain-coder-eng/gazeshift (private).
-- As of 2026-10-11: documentation only; no prototype or measured results yet. The GitHub connector was separately verified to identify this private repository and read this document.
-- Known preflight blocker on 2026-10-11: the Xcode license has not been accepted. The user must resolve that and verify Xcode, signing, and real-device deployment before treating the six-hour estimate as feasible. Do not accept licenses or install applications on the user's behalf.
+- Working title: **GazeShift**; owner: a Penn State AI Engineering student with a Mac/laptop and a limited hardware budget.
+- Repository: [Hussain-coder-eng/gazeshift](https://github.com/Hussain-coder-eng/gazeshift), private.
+- On 2026-10-11, baseline `5876905` was built, installed and launched on a physical **iPhone 15 Pro Max** before pivot edits. The user also reported “Camera opens; ready for new version.” The original plan named an iPhone 13; that was not the deployment device for this evidence.
+- The earlier “documentation only” and pending-Xcode-license notes are historical. Baseline deployment succeeded; do not carry those notes forward as current blockers or infer that every setup condition is guaranteed for a future run.
+- The user explicitly pivoted completely away from eye tracking while retaining finger-in-air tracing. Manual-flow implementation is in progress and awaits physical-device verification of gestures and end-to-end operation.
 
-## Main idea
+## Current scope
 
-Explore gaze-contingent image relocation for residual central vision loss. The long-term direction is wearable glasses/headsets; the immediate phone experiment has two stages: camera-tracked air tracing during Setup/map, then Live assist. The healthy-user demo traces an explicitly assumed region while maintaining fixed gaze. A reviewed bounding ellipse approximates the outline; it is not a diagnosed defect.
+Build a manual screen-space approximation:
 
-The core pipeline is:
+**Front image → Vision index/thumb landmarks → pinch air trace → reviewed bounding ellipse → chosen copy offset → rear original image → fixed display region and translated rectangular copy.**
 
-**Front image + Vision hand landmarks + calibrated fixation → air outline → reviewed ellipse with fixation-relative offset → switch/recalibrate → rear original image + live gaze → one translated rectangular copy → phone display.**
+The region stays fixed in display coordinates after review. It does not follow the eyes, head or a retinal defect. Remove runtime eye estimates, gaze calibration, gaze validation and gaze-driven placement; do not replace them with synthetic gaze. Actual camera-tracked air tracing remains essential. Touch may operate Review, Redo and offset controls, not silently replace tracing.
 
-The copy applies only to the displayed image. Actual air tracing and live eye tracking are essential; do not substitute touchscreen tracing, head movement, scripted gaze or a dwell-selection app. Touch controls may operate Review/Redo and the chosen copy offset.
+Use one continuous closed stroke and review the min/max bounding ellipse derived from it. The ellipse loses irregular outline details and represents an assumed region, not a diagnosed defect. Keep trace and region data in session memory. Choose one explicit copy offset; do not auto-clamp, shrink or search for a different placement.
 
-## Technical starting point
+## Technical path
 
-Use native Swift, ARKit and Vision; no new model training or cloud LLM in the live loop. Use the same ARSession sequentially: supported `ARFaceTrackingConfiguration` provides the front image and face anchors during setup; `VNDetectHumanHandPoseRequest` finds index/thumb tips for a virtual 2D cursor, not a 3D finger ray. Supported `ARWorldTrackingConfiguration.userFaceTrackingEnabled` provides the rear image and face anchors during Live assist, not both raw camera feeds. Check each configuration on the actual phone; never start competing capture sessions.
+Reuse the existing native Swift, SwiftUI, ARKit, Vision and Metal implementation. No new dependency, model training, backend or cloud processing belongs in the image loop.
 
-`ARFaceAnchor.lookAtPoint` is face-relative, not screen pixels. Calibrate and validate held-out screen gaze in setup mode, then clear old data and refit/revalidate after switching to live mode. Follow the fixed-window coverage and per-target accuracy gates in BUILD_PROMPTS. Camera projection alone is not physical-screen gaze. Test orientation, crop, mirroring and y-axis conversion exactly once. Geometry/distance changes invalidate calibration and the region; normalization does not correct visual-angle changes.
+Use the same ARSession sequentially. Front setup retains supported `ARFaceTrackingConfiguration` solely as the camera-frame source for `VNDetectHumanHandPoseRequest`; its name does not mean eye or face estimates drive the app. Rear mode uses `ARWorldTrackingConfiguration` with `userFaceTrackingEnabled = false`. Do not start competing capture sessions or require simultaneous front/rear video.
 
-Air tracing requires a stationary fixation reference and valid hand/gaze signals throughout one closed stroke. Drift, occlusion or missing points invalidates the stroke; require Redo rather than joining gaps. Review a min/max bounding ellipse, preserve its center offset from fixation and keep the raw trace/session metadata only in memory. This approximation loses irregular outline details; do not silently recenter it onto gaze or claim per-eye clinical mapping.
+Vision supplies a virtual 2D cursor from hand landmarks, not a 3D pointing ray. Verify orientation, viewport crop, front mirroring and y-axis conversion on the phone. Only fresh, valid hand samples may form the outline. Hand loss, stale data, occlusion or a broken stroke must invalidate the stroke and require Redo rather than joining gaps. Clear transient frame/hand state at a camera switch and require fresh rear imagery before displaying effects.
 
-In Live assist, the region follows gaze plus the stored offset. Copy its enclosing rectangle from the original unblurred frame to one user-chosen offset, over the original scene. Source and destination must fit valid image/view bounds; destination must avoid the assumed region plus a provisional live-gaze-error margin. Otherwise show “No valid placement — original view” and bypass. No recursive sampling, auto-clamping, invented pixels or full-scene radial warp. The copy duplicates content, covers destination content and can move again when looked at; this is a peripheral-viewing experiment.
+Copy the enclosing rectangle from the original unblurred frame. Source and destination must fit valid image/view bounds, and destination must clear the approximate region plus the named placement safety gap. The gap is an engineering guard, not a measured gaze error or evidence of usable peripheral vision. Invalid placement shows “No valid placement — original view” and bypasses the copy. Never recursively sample an earlier copy, clamp partial source pixels, invent content or introduce a full-scene warp.
 
-Normal Live assist adds no artificial blur. The required Demo comparison shows Original / Simulated blur / Simulated blur + copy using the same frame, mask and full-viewport geometry. Simulation stays off until selected and is clearly labeled; copy original pixels first and apply the identical assumed blur last to both simulated views. Never sample already blurred pixels. Simulated blur + copy must demonstrate live calibrated gaze moving the region and patch together, with both cleared/recovered under the same tracking rules. A labeled frozen comparison is supplementary only and cannot replace live gaze-contingent blur evidence. Missing live comparison is unfinished scope.
+Normal Live assist adds no artificial blur. Preserve Original / Simulated blur / Simulated blur + copy using the same source frame, mask and full-viewport geometry. Simulation is explicitly labeled and off until selected. Copy original pixels first, then apply the identical simulated blur last to both simulated modes. The reviewed region remains fixed in all modes; eye movements must not move it.
 
-On invalid gaze, clear the indicator/copy and show the healthy original scene with “Tracking unavailable — original view” until three fresh valid samples recover. A failed source instead shows “Scene unavailable” or “Paused”; never label a frozen frame live. Keep finite off-screen estimates in accuracy scoring before rejecting them from the display.
-
-## Six-hour constraints
-
-The 360-minute plan is conditional on a ready Mac/Xcode/signing setup and an available real device:
-
-1. First 90 minutes: prove both configurations and actual hand/eye data, then calibrate front-mode gaze and pass the held-out eye-only gate.
-2. Minutes 90–150: air-trace and review the approximate ellipse, switch modes, refit and validate live gaze. Minute 150 is a second go/no-go gate.
-3. Minutes 150–210: implement one original-image rectangular copy with explicit placement checks and loss/recovery.
-4. Minutes 210–300: test mapping, switching, gaze, placement, drift and failures on the device.
-5. Final 60 minutes: record air tracing, live eye-driven relocation and the required blur comparison, prepare the pitch and finish review.
-
-Gesture tracking and the second calibration make this optimistic. Setup during the event consumes the same six-hour window; missed gates are reported, not silently removed.
-
-Do not add accounts, a backend, object recognition, hardware purchases, new model training, or clinical calibration during this build. Preserve a controlled seated demo. If live rear input fails, clearly labeled prerecorded scene input is an allowed fallback; live gaze remains core. If live gaze itself fails, report the blocker and do not claim the core demo works.
+Track scene freshness independently of the hand stroke. A stalled or failed source must clear effects and show “Scene unavailable” or “Paused”, never a frozen frame labeled live. Stop, retry, background/resume and reconfiguration must not retain stale effect state. Keep one orientation and stable viewing distance for the controlled demonstration; verify layout changes before reusing a region.
 
 ## What counts as evidence
 
-Success means actual air tracing followed by live eyes driving patch relocation, demonstrated on the device in a playable recording. Record test outcomes, limitations and whether evidence is agent-observed, user-reported or not tested. Do not invent accuracy, FPS, latency or benefit figures. A build, simulator screenshot or passing software check is not proof of either live input.
+The six-hour budget is an estimate for completing the manual phone experiment, not a guarantee or a fresh claim that six hours remain. Reuse the already deployed baseline and prioritize actual air tracing, one copy and device evidence. The current checks are in [SIX_HOUR_PLAN.md](SIX_HOUR_PLAN.md); old gaze accuracy gates are superseded.
 
-Future user benefit requires validation beyond this experiment, including comparison with ordinary magnification. Retinal mapping, actual scotoma shape/offset, PRL calibration, binocular/bilateral viewing, and adaptation/stability are unresolved clinical research questions. The simulated region is not diagnosis or a medical correction. Do not claim normal sight is restored, prescriptions/inserts are replaced, disease is cured, or patient benefit is proven.
+Success means actual air tracing, explicit ellipse review, rear-scene copying at the chosen offset, all three comparison modes, and visible failure/recovery demonstrated on the phone in a playable recording. Keep agent-observed, user-reported and not-tested results separate. A successful build, install, launch or simulator check does not prove physical gestures or the full flow. Do not invent frame rates, latency, accuracy or benefit figures. Sample age is not end-to-end latency.
 
-No clinical participant access, partner commitment, Nittany AI selection, or startup validation is confirmed. Treat those as future possibilities and use conditional wording such as “if selected.”
+If live rear input fails, a local prerecorded scene is a clearly labeled fallback; air tracing remains live. State which source the recording uses. No prerecorded or regenerated media may stand in for working gesture evidence.
+
+## Claims and limits
+
+The manual region is fixed to the screen, whereas a retinal blind spot moves within the displayed scene as the eyes move. This prototype therefore cannot track the blind spot, measure retinal damage, infer a preferred retinal locus (PRL), diagnose disease, restore normal sight, replace prescriptions or establish patient benefit. Simulated blur is an illustration, not a patient's vision. The copy duplicates content and covers destination content.
+
+Future assistance would require independently measured vision mapping, registration, PRL and binocular validation, and task-performance/comfort comparison with ordinary magnification. No clinical participant access, clinician partnership, Nittany AI selection or startup validation is confirmed; use conditional wording such as “if selected.”
 
 ## Working instructions
 
-Keep work small and practical. Reuse native features and existing dependencies. Work on a feature branch; dispatch file changes through the Gang's write-path agent. Commit and verify changes, then obtain an independent Superpowers code review before merging and pushing to `main`. Re-review any branch carried over from an earlier session before merging. Do not implement the app until implementation is requested.
+Keep work small and practical. No accounts, backend, object recognition, new diseases, hardware purchases, new model training or clinical calibration. Preserve diagnostic history; do not silently rewrite earlier results as successes. Synced `sources/` files remain read-only.
 
-Communicate what exists, what was verified, and what remains blocked separately. Keep supplied facts and scope; do not invent access, outcomes, clinical claims, or connector status.
-
-## References
-
-- Apple: [Combining user face tracking and world tracking](https://developer.apple.com/documentation/arkit/combining-user-face-tracking-and-world-tracking).
-- Apple: [`ARFaceAnchor.lookAtPoint`](https://developer.apple.com/documentation/arkit/arfaceanchor/lookatpoint).
-- Apple: [Hand-pose and pinch example](https://developer.apple.com/videos/play/wwdc2020/10653/) and [Vision with ARFrame](https://developer.apple.com/videos/play/wwdc2021/10039/).
-- Research: [Fixation and mapping limitations](https://pmc.ncbi.nlm.nih.gov/articles/PMC7937995/); an air outline is not clinical per-eye mapping.
-- Research: [PRL and video calibration](https://pmc.ncbi.nlm.nih.gov/articles/PMC5714047/).
-- Research: [Simulated image-remapping study](https://pmc.ncbi.nlm.nih.gov/articles/PMC5830989/); simulation is not patient efficacy.
-- Research: [Stability limits](https://pmc.ncbi.nlm.nih.gov/articles/PMC5381883/).
+Use feature branches and the Gang's write-path agent. Commit and verify scoped changes, then obtain independent Superpowers review of final BASE/HEAD before merging and pushing. Re-review a branch carried over from an earlier session. Keep the repository private, preserve available protections and report unavailable protection without weakening privacy. Keep secrets, signing material and large recordings out of Git.

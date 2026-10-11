@@ -1,5 +1,7 @@
 # GazeShift Incremental Build Prompt Pack
 
+> **Historical prompt pack — superseded 2026-10-11.** The user explicitly pivoted completely away from eye tracking while retaining finger-in-air tracing. The current manual screen-space flow is defined in [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) and [SIX_HOUR_PLAN.md](SIX_HOUR_PLAN.md). Do not execute this pack's gaze calibration, eye-driven placement, iPhone 13 or preflight assumptions as current requirements. The body below is preserved as historical context; baseline `5876905` was subsequently built, installed and launched on an iPhone 15 Pro Max, while the pivot still awaits physical-device verification.
+
 > **For agentic workers:** Use `superpowers:subagent-driven-development` to execute these prompts one at a time after implementation is requested. Use the Gang's write-path agent for file changes and independent Superpowers review before merging. This document prepares the work; it does not authorize starting the app by itself.
 
 **Goal:** Record an iPhone 13 demonstration of camera-tracked air tracing followed by live eyes moving a copy of affected image content to an explicitly chosen display offset.
