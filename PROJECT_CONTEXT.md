@@ -26,7 +26,7 @@ Use native Swift and Apple's existing tracking/ML capabilities; do not train a n
 
 `ARFaceAnchor.lookAtPoint` is a face-coordinate estimate, not a screen pixel position. Calibrate a mapping to the physical display and validate it on held-out targets. Distinguish physical-screen coordinates from camera-image projection. Account explicitly for orientation, preview transformations, and display alignment. Do not start competing ARKit/AVFoundation sessions for the two camera streams.
 
-Keep the first warp simple and adjustable. On lost or invalid tracking, clear the gaze indicator, stop the adaptive effect, and show the original feed. Do not leave a stale active warp on screen.
+Keep the first warp simple and adjustable. On lost or invalid tracking, clear the gaze indicator, stop the adaptive effect, show the original feed, and display “Tracking unavailable — original view.” Keep that status visible until valid tracking returns; then clear the status and resume the indicator/effect. Verify both loss and recovery. Do not leave a stale active warp on screen.
 
 ## Six-hour constraints
 

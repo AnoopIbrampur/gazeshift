@@ -17,6 +17,7 @@ The longer-term idea is glasses or a headset for people with residual vision and
 - [Project context and working instructions](PROJECT_CONTEXT.md): durable context for ChatGPT and future contributors.
 - [Six-hour build plan](SIX_HOUR_PLAN.md): time budget, first-device go/no-go gate, tests, and demo evidence.
 - [Private GitHub repository](https://github.com/Hussain-coder-eng/gazeshift).
+- [ChatGPT project](https://chatgpt.com/g/g-p-6acbc5e009008191a0d00a958ec143d0/project).
 
 ## Evidence and boundaries
 

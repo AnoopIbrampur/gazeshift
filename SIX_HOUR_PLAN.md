@@ -4,7 +4,7 @@
 
 **Goal:** Record an iPhone demo in which live eye movements drive a live transformation of the displayed camera scene around an explicitly assumed or simulated blind-spot region.
 
-**Architecture:** A single native ARKit session supplies rear-camera frames and front-camera face/eye estimates. A calibrated mapping converts face-relative gaze into physical-screen coordinates; one simple image warp follows that gaze. Invalid tracking clears the marker and adaptive effect and returns to the original feed.
+**Architecture:** A single native ARKit session supplies rear-camera frames and front-camera face/eye estimates. A calibrated mapping converts face-relative gaze into physical-screen coordinates; one simple image warp follows that gaze. Invalid tracking clears the marker and adaptive effect, returns to the original feed, and displays “Tracking unavailable — original view” until valid tracking returns.
 
 **Tech stack:** Swift, ARKit, Apple's existing tracking/ML, and a minimal native image-rendering path. No new model training or cloud LLM in the live loop.
 
@@ -31,7 +31,7 @@ The current repository contains only `README.md` (idea/status), `PROJECT_CONTEXT
 
 - **Coordinate mismatch:** held-out screen targets and edge targets must reveal orientation, mirroring, preview-crop, or camera/display alignment errors.
 - **Head movement mistaken for eye tracking:** eyes must move the calibrated marker with the head still; then test head movement separately.
-- **Lost, blinking, or invalid tracking:** the marker and adaptive effect must clear and the original image must return.
+- **Lost, blinking, or invalid tracking:** the marker and adaptive effect must clear, the original image must return, and “Tracking unavailable — original view” must remain visible until valid tracking returns.
 - **Drift and delay:** repeat calibration targets later and inspect recorded motion for visible lag; report observations without fabricated measurements.
 - **Fallback misrepresented as live input:** the recording and pitch must label prerecorded scene input and still demonstrate live eye tracking.
 
@@ -50,7 +50,7 @@ The current repository contains only `README.md` (idea/status), `PROJECT_CONTEXT
 - [ ] Display the unmodified rear scene with the orientation and display mapping made explicit.
 - [ ] Gather calibration samples at onscreen targets and map the face-relative estimate to the physical screen.
 - [ ] Test held-out targets, screen edges, and eye movement with the head still; test head movement separately.
-- [ ] Trigger tracking loss and verify the marker clears and the original feed remains visible.
+- [ ] Trigger tracking loss and verify the marker clears, the original feed remains visible, and “Tracking unavailable — original view” appears. Verify the status clears and the marker resumes only after valid tracking returns.
 - [ ] Record the actual device/configuration, results, and blockers; commit the working checkpoint on the feature branch.
 
 **Go/no-go at minute 90:** Continue to remapping only if simultaneous data and useful calibrated live eye response have been demonstrated on the phone. If rear-scene capture is the only blocker, use clearly labeled prerecorded scene input while preserving live gaze. If gaze cannot be demonstrated, preserve the experiment and failure evidence; do not silently spend the remaining window on a substitute app or claim the core goal succeeded.
@@ -62,7 +62,7 @@ The current repository contains only `README.md` (idea/status), `PROJECT_CONTEXT
 - [ ] Add controls for the region's assumed size/offset and a simple warp strength; explicitly label the region as assumed/simulated.
 - [ ] Implement the smallest useful image transformation and verify its center follows the calibrated display marker.
 - [ ] Include an original/transformed view toggle for comparison. Keep the image visible at edges and avoid invalid rendering coordinates.
-- [ ] On invalid/lost tracking, clear the marker, disable the adaptive effect, and show the original feed; verify this on the phone.
+- [ ] On invalid/lost tracking, clear the marker, disable the adaptive effect, show the original feed, and display “Tracking unavailable — original view.” On valid tracking recovery, clear the status and resume the marker/effect; verify both transitions on the phone.
 - [ ] Leave one small runnable check for any nontrivial coordinate/warp logic, then commit the checkpoint. This check supplements real-device evidence.
 
 Do not tune a clinically meaningful scotoma or PRL mapping here. The adjustable parameters support an experiment, not retinal diagnosis.
@@ -73,7 +73,7 @@ Do not tune a clinically meaningful scotoma or PRL mapping here. The adjustable 
 
 - [ ] Re-test held-out center/edge targets, orientation/alignment, and eyes moving with the head still.
 - [ ] Test head motion separately, then blinks, looking away, obscured face, tracking recovery, and invalid gaze.
-- [ ] Verify each tracking-loss case returns to the original feed with no stale active warp.
+- [ ] Verify each tracking-loss case returns to the original feed with no stale active warp and the visible “Tracking unavailable — original view” status. Verify the status persists during loss and clears only when valid tracking returns and the marker/effect resume.
 - [ ] Revisit calibration targets after elapsed use to observe drift; inspect frame/gaze/warp motion for visible delay.
 - [ ] Compare original/transformed views. Document only actual observations and measured values when a real measurement exists.
 - [ ] Fix the highest-impact failure, repeat its check, and commit the checkpoint. Obtain independent review before merging any branch.
