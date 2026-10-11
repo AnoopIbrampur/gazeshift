@@ -382,8 +382,6 @@ struct AirMapControls: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("AIR MAP").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             if let flow = model.flow {
-                Text(instruction(flow.state)).font(.subheadline)
-                Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)
                 HStack {
                     if flow.state == .armed || flow.state == .tracing {
                         Button("Finish shape") { model.finish() }
@@ -399,6 +397,8 @@ struct AirMapControls: View {
                     Spacer()
                     Button("Close") { model.end() }.buttonStyle(.bordered)
                 }
+                Text(instruction(flow.state)).font(.subheadline)
+                Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)
 
             } else {
                 Button("Start drawing", action: onStart)
