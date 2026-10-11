@@ -4,17 +4,44 @@
     classes = {};
     objectVersion = 56;
     objects = {
+
+        D00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturePipelineTests.swift; sourceTree = "<group>"; };
+        D00000000000000000000002 = {isa = PBXBuildFile; fileRef = D00000000000000000000001; };
+        D00000000000000000000003 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = GazeShiftTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        D00000000000000000000004 = {isa = PBXGroup; children = (D00000000000000000000001); path = GazeShiftTests; sourceTree = "<group>"; };
+        D00000000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000002); runOnlyForDeploymentPostprocessing = 0; };
+        D00000000000000000000006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        D00000000000000000000007 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        D00000000000000000000008 = {isa = PBXNativeTarget; buildConfigurationList = D00000000000000000000009; buildPhases = (D00000000000000000000005, D00000000000000000000006, D00000000000000000000007); buildRules = (); dependencies = (D0000000000000000000000D); name = GazeShiftTests; productName = GazeShiftTests; productReference = D00000000000000000000003; productType = "com.apple.product-type.bundle.unit-test"; };
+        D00000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (D0000000000000000000000A, D0000000000000000000000B); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        D0000000000000000000000A = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GazeShift.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GazeShift"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = GM35V32RR7; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.hussainaltufayli.GazeShiftTests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = 1; SWIFT_VERSION = 5.0; }; name = Debug; };
+        D0000000000000000000000B = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GazeShift.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GazeShift"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = GM35V32RR7; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.hussainaltufayli.GazeShiftTests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = 1; SWIFT_VERSION = 5.0; }; name = Release; };
+        D0000000000000000000000C = {isa = PBXContainerItemProxy; containerPortal = A0000000000000000000000D; proxyType = 1; remoteGlobalIDString = A0000000000000000000000C; remoteInfo = GazeShift; };
+        D0000000000000000000000D = {isa = PBXTargetDependency; target = A0000000000000000000000C; targetProxy = D0000000000000000000000C; };
+
+        B00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text; path = CameraShaders.metal; sourceTree = "<group>"; };
+        C00000000000000000000006 = {isa = PBXBuildFile; fileRef = B00000000000000000000006; };
+        B00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraView.swift; sourceTree = "<group>"; };
+        C00000000000000000000005 = {isa = PBXBuildFile; fileRef = B00000000000000000000005; };
+        B00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureController.swift; sourceTree = "<group>"; };
+        C00000000000000000000004 = {isa = PBXBuildFile; fileRef = B00000000000000000000004; };
+        B00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandTracker.swift; sourceTree = "<group>"; };
+        C00000000000000000000003 = {isa = PBXBuildFile; fileRef = B00000000000000000000003; };
+        B00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayGeometry.swift; sourceTree = "<group>"; };
+        C00000000000000000000002 = {isa = PBXBuildFile; fileRef = B00000000000000000000002; };
+        B00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureTypes.swift; sourceTree = "<group>"; };
+        C00000000000000000000001 = {isa = PBXBuildFile; fileRef = B00000000000000000000001; };
         A00000000000000000000001 = {isa = PBXBuildFile; fileRef = A00000000000000000000003; };
         A00000000000000000000002 = {isa = PBXBuildFile; fileRef = A00000000000000000000004; };
         A00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GazeShiftApp.swift; sourceTree = "<group>"; };
         A00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
         A00000000000000000000005 = {isa = PBXFileReference; explicitFileType = wrapper.application; path = GazeShift.app; sourceTree = BUILT_PRODUCTS_DIR; };
-        A00000000000000000000006 = {isa = PBXGroup; children = (A00000000000000000000007, A00000000000000000000008); sourceTree = "<group>"; };
-        A00000000000000000000007 = {isa = PBXGroup; children = (A00000000000000000000003, A00000000000000000000004); path = GazeShift; sourceTree = "<group>"; };
-        A00000000000000000000008 = {isa = PBXGroup; children = (A00000000000000000000005); name = Products; sourceTree = "<group>"; };
-        A00000000000000000000009 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000006 = {isa = PBXGroup; children = (A00000000000000000000007, D00000000000000000000004, A00000000000000000000008); sourceTree = "<group>"; };
+        A00000000000000000000007 = {isa = PBXGroup; children = (B00000000000000000000006, B00000000000000000000005, B00000000000000000000004, B00000000000000000000003, B00000000000000000000002, A00000000000000000000003, A00000000000000000000004, B00000000000000000000001); path = GazeShift; sourceTree = "<group>"; };
+        A00000000000000000000008 = {isa = PBXGroup; children = (A00000000000000000000005, D00000000000000000000003); name = Products; sourceTree = "<group>"; };
+        A00000000000000000000009 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000005, C00000000000000000000004, C00000000000000000000003, C00000000000000000000002, A00000000000000000000001, A00000000000000000000002, C00000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
         A0000000000000000000000A = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-        A0000000000000000000000B = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A0000000000000000000000B = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000006); runOnlyForDeploymentPostprocessing = 0; };
         A0000000000000000000000C = {
             isa = PBXNativeTarget;
             buildConfigurationList = A00000000000000000000010;
@@ -38,11 +65,11 @@
             productRefGroup = A00000000000000000000008;
             projectDirPath = "";
             projectRoot = "";
-            targets = (A0000000000000000000000C);
+            targets = (A0000000000000000000000C, D00000000000000000000008);
         };
         A0000000000000000000000F = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011, A00000000000000000000012); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
         A00000000000000000000010 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000013, A00000000000000000000014); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-        A00000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+        A00000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; ENABLE_TESTABILITY = YES; }; name = Debug; };
         A00000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule; }; name = Release; };
         A00000000000000000000013 = {isa = XCBuildConfiguration; buildSettings = {
                 CODE_SIGN_STYLE = "Automatic";
@@ -55,7 +82,7 @@
                 INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait";
                 PRODUCT_BUNDLE_IDENTIFIER = "com.hussainaltufayli.GazeShift";
                 PRODUCT_NAME = "$(TARGET_NAME)";
-                CURRENT_PROJECT_VERSION = "1011.14.52";
+                CURRENT_PROJECT_VERSION = "1011.15.22";
                 MARKETING_VERSION = "0.1";
                 TARGETED_DEVICE_FAMILY = "1";
                 SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -74,7 +101,7 @@
                 INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait";
                 PRODUCT_BUNDLE_IDENTIFIER = "com.hussainaltufayli.GazeShift";
                 PRODUCT_NAME = "$(TARGET_NAME)";
-                CURRENT_PROJECT_VERSION = "1011.14.52";
+                CURRENT_PROJECT_VERSION = "1011.15.22";
                 MARKETING_VERSION = "0.1";
                 TARGETED_DEVICE_FAMILY = "1";
                 SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

@@ -1,0 +1,162 @@
+import XCTest
+import ImageIO
+import Combine
+import CoreVideo
+@testable import GazeShift
+
+final class CapturePipelineTests: XCTestCase {
+    private func identity(_ timestamp: Double, receipt: Double = 10, generation: UInt64 = 1) -> FrameIdentity {
+        FrameIdentity(generation: generation, captureTimestamp: timestamp, receivedAt: receipt)
+    }
+    private func eyes(tracked: Bool = true, x: Float = 0.1) -> EyeObservation {
+        EyeObservation(lookAtPoint: SIMD3(x, 0.2, 1), leftEyeTranslation: SIMD3(-0.03, 0, 0), rightEyeTranslation: SIMD3(0.03, 0, 0), leftBlink: 0, rightBlink: 0, isTracked: tracked)
+    }
+    func testAgeIncludes250msBoundaryAndRejectsNegativeOrNonfinite() {
+        XCTAssertTrue(identity(1).isFresh(at: 10.25))
+        XCTAssertFalse(identity(1).isFresh(at: 10.250001))
+        XCTAssertFalse(identity(1).isFresh(at: 9.99))
+        XCTAssertFalse(identity(.nan).isFresh(at: 10))
+        XCTAssertFalse(identity(1).isFresh(at: .infinity))
+    }
+    func testRecoveryNeedsThreeDistinctIncreasingFreshSamples() {
+        var state = CaptureFreshness(generation: 1)
+        state.acceptEyes(eyes(), identity: identity(1), now: 10)
+        state.acceptEyes(eyes(), identity: identity(1), now: 10)
+        XCTAssertEqual(state.recoveryCount, 1)
+        state.acceptEyes(eyes(), identity: identity(2), now: 10)
+        XCTAssertFalse(state.trackingAvailable)
+        state.acceptEyes(eyes(), identity: identity(3), now: 10)
+        XCTAssertTrue(state.trackingAvailable)
+        state.acceptEyes(nil, identity: identity(4), now: 10)
+        XCTAssertFalse(state.trackingAvailable)
+        XCTAssertEqual(state.recoveryCount, 0)
+    }
+    func testInvalidEyesInvalidateRecoveryAndWrongGenerationCannotRecover() {
+        for invalid in [eyes(tracked: false), eyes(x: .nan)] {
+            var state = CaptureFreshness(generation: 1)
+            state.acceptEyes(eyes(), identity: identity(1), now: 10)
+            state.acceptEyes(invalid, identity: identity(2), now: 10)
+            XCTAssertEqual(state.recoveryCount, 0)
+        }
+        var state = CaptureFreshness(generation: 2)
+        state.acceptEyes(eyes(), identity: identity(1), now: 10)
+        state.acceptEyes(eyes(), identity: identity(2, generation: 2), now: 10.251)
+        XCTAssertEqual(state.recoveryCount, 0)
+    }
+    func testDuplicateFrameCannotRefreshIndependentWatchdog() {
+        var state = CaptureFreshness(generation: 1)
+        XCTAssertTrue(state.acceptScene(identity(1), now: 10))
+        XCTAssertFalse(state.acceptScene(identity(1, receipt: 10.2), now: 10.2))
+        XCTAssertFalse(state.expireScene(at: 10.25))
+        XCTAssertTrue(state.expireScene(at: 10.251))
+        XCTAssertFalse(state.acceptScene(identity(0, receipt: 10.3), now: 10.3))
+        XCTAssertTrue(state.acceptScene(identity(2, receipt: 10.3), now: 10.3))
+    }
+    func testNewestQueueExecutesAThenCAndClearDoesNotReleaseA() {
+        var queue = NewestWorkQueue<String>()
+        XCTAssertEqual(queue.offer("A"), "A")
+        XCTAssertNil(queue.offer("B"))
+        XCTAssertNil(queue.offer("C"))
+        XCTAssertEqual(queue.complete(), "C")
+        XCTAssertNil(queue.complete())
+        XCTAssertEqual(queue.offer("A"), "A")
+        queue.clearPending()
+        XCTAssertNil(queue.offer("new generation"))
+        XCTAssertEqual(queue.inFlight, "A")
+        XCTAssertEqual(queue.complete(), "new generation")
+    }
+    func testAsymmetricPortraitRotationAndDeliberateMirrorOnce() throws {
+        let transform = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1, ty: 0)
+        let unmirrored = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 500), displayTransform: transform, orientation: .right, mirrored: false))
+        let mirrored = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 500), displayTransform: transform, orientation: .right, mirrored: true))
+        assertPoint(unmirrored.visionToDisplay(CGPoint(x: 0.2, y: 0.7)), CGPoint(x: 0.2, y: 0.3))
+        assertPoint(mirrored.visionToDisplay(CGPoint(x: 0.2, y: 0.7)), CGPoint(x: 0.8, y: 0.3))
+    }
+    func testEXIFInverseAllOrientationsAndCropRoundTrip() throws {
+        let inputs: [(CGImagePropertyOrientation, CGPoint)] = [(.up, CGPoint(x: 0.2,y: 0.3)), (.upMirrored, CGPoint(x: 0.8,y: 0.3)), (.down, CGPoint(x: 0.8,y: 0.7)), (.downMirrored, CGPoint(x: 0.2,y: 0.7)), (.leftMirrored, CGPoint(x: 0.3,y: 0.2)), (.right, CGPoint(x: 0.3,y: 0.8)), (.rightMirrored, CGPoint(x: 0.7,y: 0.8)), (.left, CGPoint(x: 0.7,y: 0.2))]
+        for (orientation, expectedRaw) in inputs {
+            let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300,height: 500), displayTransform: .identity, orientation: orientation, mirrored: false))
+            assertPoint(geometry.visionToDisplay(CGPoint(x: 0.2,y: 0.7)), expectedRaw)
+        }
+        let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300,height: 500), displayTransform: CGAffineTransform(a: 1.4,b: 0,c: 0,d: 1.8,tx: -0.2,ty: -0.4), orientation: .up, mirrored: true))
+        let display = geometry.visionToDisplay(CGPoint(x: 0.2,y: 0.7))
+        assertPoint(display, CGPoint(x: 0.92,y: 0.14))
+        assertPoint(geometry.displayToRaw(display), CGPoint(x: 0.2,y: 0.3))
+    }
+    func testInvalidGeometryRejected() {
+        XCTAssertNil(DisplayGeometry(viewport: .zero, displayTransform: .identity, orientation: .up, mirrored: false))
+        XCTAssertNil(DisplayGeometry(viewport: CGSize(width: 1,height: 1), displayTransform: CGAffineTransform(scaleX: 0,y: 1), orientation: .up, mirrored: false))
+    }
+    func testSimulatorSnapshotContainsNoInventedSensorsOrScene() {
+        let snapshot = CaptureSnapshot.simulator
+        XCTAssertEqual(snapshot.status, .simulator)
+        XCTAssertNil(snapshot.renderPacket)
+        XCTAssertNil(snapshot.eyes)
+        XCTAssertNil(snapshot.eyeIdentity)
+        XCTAssertNil(snapshot.hand)
+    }
+    func testDelayedCallbackAgeUsesElapsedCaptureClockWithoutAssumingEpochs() throws {
+        var clock = CaptureClock()
+        let first = try XCTUnwrap(clock.identity(generation: 1, captureTimestamp: 5000, receivedAt: 10))
+        XCTAssertTrue(first.isFresh(at: 10))
+        let queued = try XCTUnwrap(clock.identity(generation: 1, captureTimestamp: 5000.033, receivedAt: 10.4))
+        XCTAssertFalse(queued.isFresh(at: 10.4))
+        XCTAssertNil(clock.identity(generation: 1, captureTimestamp: .nan, receivedAt: 10.5))
+    }
+    func testSwitchRejectsOldInFlightCompletionAndOlderCurrentResults() {
+        var gate = HandResultFreshness(generation: 2)
+        XCTAssertFalse(gate.accept(identity(1, generation: 1), now: 10))
+        XCTAssertTrue(gate.accept(identity(3, generation: 2), now: 10))
+        XCTAssertFalse(gate.accept(identity(2, generation: 2), now: 10))
+        XCTAssertFalse(gate.accept(identity(3, generation: 2), now: 10))
+        XCTAssertFalse(gate.accept(identity(4, generation: 2), now: 10.251))
+    }
+    @MainActor
+    func testSimulatorControlsNeverPublishRealOrSimulatedSensorInput() async {
+        #if targetEnvironment(simulator)
+        let model = CaptureModel()
+        let updated = expectation(description: "Simulator rear selection published")
+        var received: [CaptureSnapshot] = []
+        let subscription = model.$snapshot.sink { snapshot in
+            received.append(snapshot)
+            if snapshot.mode == .liveRear && snapshot.status == .simulator { updated.fulfill() }
+        }
+        model.layout(CGSize(width: 300, height: 500), scale: 3)
+        model.start(.liveRear)
+        await fulfillment(of: [updated], timeout: 3)
+        for snapshot in received {
+            XCTAssertEqual(snapshot.status, .simulator)
+            XCTAssertNil(snapshot.renderPacket)
+            XCTAssertNil(snapshot.eyes)
+            XCTAssertNil(snapshot.hand)
+        }
+        subscription.cancel()
+        model.stop()
+        #endif
+    }
+    func testDelayedSourceWatchdogUsesCaptureAgeRatherThanCallbackReceipt() {
+        var state = CaptureFreshness(generation: 1)
+        let delayed = FrameIdentity(generation: 1, captureTimestamp: 50, receivedAt: 10.2, estimatedCaptureAt: 10)
+        XCTAssertTrue(state.acceptScene(delayed, now: 10.2))
+        XCTAssertTrue(state.expireScene(at: 10.251))
+    }
+    func testDelayedDisplayUpdateCannotRestoreStaleSceneEyesOrCursor() throws {
+        var image: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &image), kCVReturnSuccess)
+        let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 500), displayTransform: .identity, orientation: .up, mirrored: false))
+        let id = identity(1)
+        let packet = RenderPacket(identity: id, image: try XCTUnwrap(image), geometry: geometry, mode: .setupFront)
+        let hand = HandObservation(identity: id, indexTip: CGPoint(x: 0.2,y: 0.3), thumbTip: CGPoint(x: 0.3,y: 0.4), indexConfidence: 1, thumbConfidence: 1)
+        let snapshot = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready, support: nil, renderPacket: packet, eyes: eyes(), eyeIdentity: id, hand: hand, handMessage: "active")
+        let delayed = snapshot.forDisplay(at: 10.251)
+        XCTAssertEqual(delayed.status, .sceneUnavailable)
+        XCTAssertNil(delayed.renderPacket)
+        XCTAssertNil(delayed.eyes)
+        XCTAssertNil(delayed.eyeIdentity)
+        XCTAssertNil(delayed.hand)
+    }
+    private func assertPoint(_ actual: CGPoint, _ expected: CGPoint, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(actual.x, expected.x, accuracy: 0.000001, file: file, line: line)
+        XCTAssertEqual(actual.y, expected.y, accuracy: 0.000001, file: file, line: line)
+    }
+}
