@@ -201,6 +201,9 @@ user's result. Label the evidence source; desktop success cannot pass.
 Build/run the affected path, commit and stop. Gate: proceed to P2 only if live
 eye data is demonstrated. If rear input alone fails, document it and plan the
 allowed local recorded-scene fallback while retaining live native eye data.
+If combined tracking is unsupported, a supported ARFaceTrackingConfiguration
+may replace the world session for that fallback; repeat the live-eye proof
+before P2 and label the scene as recorded. Never run both sessions together.
 If eye data fails, stop the dependent build and preserve the failure evidence.
 ```
 
