@@ -73,6 +73,7 @@ struct ContentView: View {
                                 .id(ScreenStyle.gazeControlsAnchor)
                             Divider()
                             unvalidatedDemoToggle
+                            blurChecklist
                             AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
                             if airTrace.reviewedRegion != nil { comparisonSection }
                             Divider()
@@ -300,6 +301,54 @@ struct ContentView: View {
                 .frame(width: copy.destination.width, height: copy.destination.height)
                 .position(x: copy.destination.x + copy.destination.width / 2, y: copy.destination.y + copy.destination.height / 2)
                 .accessibilityIdentifier("copyDestinationOutline")
+        }
+    }
+
+    /// On-screen diagnosis of every gate between "camera on" and "blur drawn", in pipeline order.
+    private var blurChecklist: some View {
+        let marker = gaze.marker(at: now)
+        let plan = composition?.plan
+        let rows: [(Bool, String)] = [
+            (snapshot.status == .ready, "Capture ready — \(snapshot.mode == .setupFront ? "FRONT" : "REAR"): \(snapshot.status.text)"),
+            (snapshot.renderPacket?.identity.isFresh(at: now) == true, "Scene fresh"),
+            (gaze.calibration != nil, "Calibration fitted (phase: \(gaze.phase))"),
+            (gaze.report?.passesCompleteGate == true || unvalidatedDemo,
+             unvalidatedDemo ? "Accuracy gate bypassed (demo ON)" : "Accuracy gate passed (or turn on demo)"),
+            (airTrace.flow != nil || airTrace.reviewedRegion != nil, "Air map: \(airTrace.flow.map { "\($0.state)" } ?? "not started")"),
+            (airTrace.reviewedRegion != nil, "Region accepted"),
+            (currentRegion != nil, "Region usable in this camera mode"),
+            (marker != nil, "Live gaze dot: \(gazeStateText)"),
+            (viewMode == .comparison(.simulatedBlur) || viewMode == .comparison(.simulatedBlurPlusCopy),
+             "View mode: \(viewModeText)"),
+            (plan?.blur != nil, "Blur layer planned: \(plan?.statusText ?? "no plan")"),
+            (compositeFailure == nil, compositeFailure.map { "Shader: \($0)" } ?? "Blur shader loaded"),
+            (compositeUniforms?.blurEnabled == 1, "Blur sent to renderer"),
+        ]
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("BLUR CHECKLIST").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                Text("\(row.0 ? "✅" : "❌") \(row.1)").foregroundStyle(row.0 ? Color.secondary : Color.orange)
+            }
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .accessibilityIdentifier("blurChecklist")
+    }
+
+    private var gazeStateText: String {
+        switch gaze.displayState(at: now) {
+        case .uncalibrated: "uncalibrated"
+        case .sceneUnavailable: "scene unavailable"
+        case .unavailable: "eyes unavailable/blinking"
+        case let .recovering(n): "recovering \(n)/\(GazeRunPolicy.recoverySamples)"
+        case .outsideView: "OUTSIDE the camera view (calibration off)"
+        case .active: "active"
+        }
+    }
+
+    private var viewModeText: String {
+        switch viewMode {
+        case .live: "Live (no blur — turn on Demo comparison)"
+        case let .comparison(mode): mode.title
         }
     }
 
