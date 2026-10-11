@@ -55,6 +55,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
     private var packet: RenderPacket?
     private var eyes: EyeObservation?
     private var eyeIdentity: FrameIdentity?
+    private var rawEyes: EyeObservation?
+    private var rawEyeIdentity: FrameIdentity?
     private var hand: HandObservation?
     private var handMessage = "Hand unavailable"
     private var handFreshness = HandResultFreshness(generation: 0)
@@ -168,6 +170,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
         freshness = CaptureFreshness(generation: generation)
         packet = nil
         eyes = nil
+        rawEyes = nil
+        rawEyeIdentity = nil
         eyeIdentity = nil
         hand = nil
         handFreshness = HandResultFreshness(generation: generation)
@@ -193,6 +197,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
         if freshness.expireScene(at: now), packet != nil || eyes != nil || hand != nil {
             packet = nil
             eyes = nil
+            rawEyes = nil
+            rawEyeIdentity = nil
             eyeIdentity = nil
             hand = nil
             status = .sceneUnavailable
@@ -227,6 +233,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
         packet = RenderPacket(identity: identity, image: frame.capturedImage, geometry: geometry, mode: mode)
         // Read anchors from this exact frame. No cached anchors get a fresh timestamp.
         let currentEyes = (frame.anchors.first { $0 is ARFaceAnchor } as? ARFaceAnchor).map(Self.eyeObservation)
+        rawEyes = currentEyes
+        rawEyeIdentity = identity
         freshness.acceptEyes(currentEyes, identity: identity, now: now)
         eyes = currentEyes?.isValid == true ? currentEyes : nil
         eyeIdentity = eyes == nil ? nil : identity
@@ -274,6 +282,6 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
     private func emit() {
         sequence &+= 1
-        publish(CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: status, support: support, renderPacket: packet, eyes: eyes, eyeIdentity: eyeIdentity, hand: hand, handMessage: handMessage))
+        publish(CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: status, support: support, renderPacket: packet, eyes: eyes, eyeIdentity: eyeIdentity, hand: hand, handMessage: handMessage, rawEyes: rawEyes, rawEyeIdentity: rawEyeIdentity))
     }
 }
