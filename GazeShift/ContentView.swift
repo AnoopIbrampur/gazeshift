@@ -466,11 +466,6 @@ struct ContentView: View {
                             Divider()
                             ComparisonControls(mode: $viewMode, plan: composition.plan)
                         }
-                        if let compositeFailure {
-                            Text("Effect unavailable — \(compositeFailure)")
-                                .font(.subheadline).foregroundStyle(.red)
-                                .accessibilityIdentifier("compositeFailure")
-                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(ScreenStyle.pagePadding)
@@ -513,14 +508,25 @@ struct ContentView: View {
     }
 
     private var cameraStatus: some View {
-        Text(snapshot.status == .ready && snapshot.renderPacket != nil
-             ? (snapshot.mode == .setupFront ? "Front · Live" : "Rear · Live")
-             : (snapshot.status == .simulator ? "Camera unavailable in Simulator" : snapshot.status.text))
-            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, ScreenStyle.pagePadding).padding(.vertical, ScreenStyle.spacing)
-            .background(.black.opacity(0.65))
-            .accessibilityIdentifier("captureStatus")
+        VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
+            Text(snapshot.status == .ready && snapshot.renderPacket != nil
+                 ? (snapshot.mode == .setupFront ? "Front · Live" : "Rear · Live")
+                 : (snapshot.status == .simulator ? "Camera unavailable in Simulator" : snapshot.status.text))
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("captureStatus")
+            if let compositeFailure {
+                Text("Effect unavailable — \(compositeFailure)")
+                    .accessibilityIdentifier("compositeFailure")
+            } else if snapshot.renderPacket != nil, let composition,
+                      composition.plan.isOriginalOnly, viewMode != .comparison(.original) {
+                Text(composition.plan.statusText)
+                    .accessibilityIdentifier("compositionStatus")
+            }
+        }
+        .font(.subheadline).foregroundStyle(.white)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, ScreenStyle.pagePadding).padding(.vertical, ScreenStyle.spacing)
+        .background(.black.opacity(0.65))
     }
 
     private var cameraSelection: some View {

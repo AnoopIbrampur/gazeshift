@@ -33,11 +33,8 @@ struct ComparisonControls: View {
                 .overlay(Capsule().stroke(ScreenStyle.accent, lineWidth: 1))
                 .accessibilityIdentifier("comparisonPicker")
             }
-            if plan.isOriginalOnly, mode != .comparison(.original) {
-                Text(plan.statusText).font(.subheadline).foregroundStyle(.red)
-                    .accessibilityIdentifier("compositionStatus")
-            }
         }
+        .accessibilityValue(plan.statusText)
     }
 
     private func comparisonButton(_ title: String, selection: ComparisonMode) -> some View {
