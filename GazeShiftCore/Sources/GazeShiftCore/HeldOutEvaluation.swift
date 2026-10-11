@@ -22,6 +22,7 @@ public enum HeldOutPolicy {
     public static let slotSeconds = 0.05
     public static let slots = 20
     public static let passes = 2
+    public static let controlsPerPass = 1
     public static let minimumValidFraction = 0.8
     public static let minimumDistinctPredictions = 10
     public static let maximumMedianFraction = 0.1
@@ -56,6 +57,10 @@ public struct HeldOutWindowResult: Sendable {
     public let target: HeldOutTarget
     public let pass: Int
     public let geometry: RenderGeometry
+    // Missing-window placeholders have no presentation; actual results preserve the capture interval.
+    public let presentedAt: Double?
+    public let startsAt: Double?
+    public let endsAt: Double?
     public let expectedSlots = HeldOutPolicy.slots
     public let validPredictions: Int
     public let receivedUniqueSamples: Int
@@ -64,13 +69,18 @@ public struct HeldOutWindowResult: Sendable {
     public let errors: ErrorStatistics?
     public let passesNumericalGate: Bool
     public let validFraction: Double
+    public let hasSufficientCoverage: Bool
     fileprivate let distances: [Double]
 
     fileprivate init(target: HeldOutTarget, pass: Int, geometry: RenderGeometry,
+                     presentedAt: Double?, startsAt: Double?, endsAt: Double?,
                      distances: [Double], received: Int, rejections: [RejectionReason: Int]) {
         self.target = target
         self.pass = pass
         self.geometry = geometry
+        self.presentedAt = presentedAt
+        self.startsAt = startsAt
+        self.endsAt = endsAt
         self.distances = distances
         validPredictions = distances.count
         receivedUniqueSamples = received
@@ -78,8 +88,9 @@ public struct HeldOutWindowResult: Sendable {
         rejectionCounts = rejections
         validFraction = Double(distances.count) / Double(HeldOutPolicy.slots)
         errors = ErrorStatistics(distances: distances, diagonal: geometry.diagonal)
-        passesNumericalGate = validFraction >= HeldOutPolicy.minimumValidFraction
-            && distances.count >= HeldOutPolicy.minimumDistinctPredictions && errors?.passes == true
+        hasSufficientCoverage = validFraction >= HeldOutPolicy.minimumValidFraction
+            && distances.count >= HeldOutPolicy.minimumDistinctPredictions
+        passesNumericalGate = hasSufficientCoverage && errors?.passes == true
     }
 }
 
@@ -87,6 +98,7 @@ public struct HeldOutWindow {
     public let target: HeldOutTarget
     public let pass: Int
     public let geometry: RenderGeometry
+    public let presentedAt: Double
     public let startsAt: Double
     public let endsAt: Double
     private var recordedSlots = Set<Int>()
@@ -102,6 +114,7 @@ public struct HeldOutWindow {
         self.target = target
         self.pass = pass
         self.geometry = geometry
+        self.presentedAt = presentedAt
         startsAt = start
         endsAt = end
     }
@@ -134,6 +147,7 @@ public struct HeldOutWindow {
         let missing = HeldOutPolicy.slots - recordedSlots.count
         if missing > 0 { completedRejections[.missing, default: 0] += missing }
         return HeldOutWindowResult(target: target, pass: pass, geometry: geometry,
+                                   presentedAt: presentedAt, startsAt: startsAt, endsAt: endsAt,
                                    distances: distances, received: receivedTimestamps.count,
                                    rejections: completedRejections)
     }
@@ -156,6 +170,7 @@ public enum EyeOnlyResponse: Sendable { case notTested, observedPass, observedFa
 
 public struct HeldOutReport: Sendable {
     public let passesNumericalGate: Bool
+    public let passesProtocolGate: Bool
     public let passesCompleteGate: Bool
     public let novelWindows: [HeldOutWindowResult]
     public let centerControls: [HeldOutWindowResult]
@@ -181,6 +196,7 @@ public struct HeldOutReport: Sendable {
                 if let result = supplied[Self.key(target, pass)] { novel.append(result) }
                 else {
                     novel.append(HeldOutWindowResult(target: target, pass: pass, geometry: geometry,
+                                                     presentedAt: nil, startsAt: nil, endsAt: nil,
                                                      distances: [], received: 0,
                                                      rejections: [.missing: HeldOutPolicy.slots]))
                 }
@@ -198,8 +214,36 @@ public struct HeldOutReport: Sendable {
         overallErrors = ErrorStatistics(distances: distances, diagonal: geometry.diagonal)
         overallValidFraction = Double(distances.count) / Double(novel.count * HeldOutPolicy.slots)
         passesNumericalGate = novel.allSatisfy(\.passesNumericalGate) && overallErrors?.passes == true
+        passesProtocolGate = Self.satisfiesProtocol(windows)
         self.eyeOnlyResponse = eyeOnlyResponse
-        passesCompleteGate = passesNumericalGate && eyeOnlyResponse == .observedPass
+        passesCompleteGate = passesNumericalGate && passesProtocolGate && eyeOnlyResponse == .observedPass
+    }
+
+    private static func satisfiesProtocol(_ windows: [HeldOutWindowResult]) -> Bool {
+        let windowsPerPass = HeldOutTarget.novelTargets.count + HeldOutPolicy.controlsPerPass
+        guard windows.count == windowsPerPass * HeldOutPolicy.passes else { return false }
+        var chronology: [(result: HeldOutWindowResult, presentedAt: Double, endsAt: Double)] = []
+        for window in windows {
+            guard let presentedAt = window.presentedAt, let startsAt = window.startsAt,
+                  let endsAt = window.endsAt, presentedAt <= startsAt, startsAt < endsAt
+            else { return false }
+            chronology.append((window, presentedAt, endsAt))
+        }
+        chronology.sort { $0.presentedAt < $1.presentedAt }
+        for (previous, next) in zip(chronology, chronology.dropFirst()) {
+            // A new target cannot be presented while the preceding target is still evaluated.
+            guard previous.endsAt <= next.presentedAt,
+                  previous.result.pass <= next.result.pass else { return false }
+        }
+        for pass in 1...HeldOutPolicy.passes {
+            let sequence = chronology.filter { $0.result.pass == pass }.map(\.result)
+            guard sequence.count == windowsPerPass,
+                  sequence.filter({ $0.target == .centerControl }).count == HeldOutPolicy.controlsPerPass,
+                  let centerIndex = sequence.firstIndex(where: { $0.target == .centerControl }),
+                  centerIndex > sequence.startIndex, centerIndex < sequence.index(before: sequence.endIndex),
+                  sequence[centerIndex].hasSufficientCoverage else { return false }
+        }
+        return true
     }
 
     private static func key(_ target: HeldOutTarget, _ pass: Int) -> String { "\(target.rawValue):\(pass)" }

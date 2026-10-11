@@ -129,24 +129,105 @@ final class GazeShiftCoreTests: XCTestCase {
     func testHeldOutReportRequiresEveryWindowAndSeparatesCenterAndEyeOnlyEvidence() throws {
         let g = try geometry()
         let model = try fitted(g)
-        var results: [HeldOutWindowResult] = []
-        for pass in 1...2 {
-            for target in HeldOutTarget.novelTargets {
-                results.append(try successfulWindow(target: target, pass: pass, model: model, geometry: g))
-            }
-        }
+        let results = try successfulProtocol(model: model, geometry: g)
         let missing = try HeldOutReport(windows: Array(results.dropLast()), geometry: g)
         XCTAssertFalse(missing.passesNumericalGate)
         XCTAssertEqual(missing.novelWindows.count, 8)
         XCTAssertEqual(missing.novelWindows.last?.rejectedSlots, 20)
-        let center = try successfulWindow(target: .centerControl, pass: 1, model: model, geometry: g)
-        let complete = try HeldOutReport(windows: results + [center], geometry: g)
+        let complete = try HeldOutReport(windows: results, geometry: g)
         XCTAssertTrue(complete.passesNumericalGate)
+        XCTAssertTrue(complete.passesProtocolGate)
         XCTAssertFalse(complete.passesCompleteGate)
         XCTAssertEqual(complete.overallValidPredictions, 160)
-        XCTAssertEqual(complete.centerControls.count, 1)
+        XCTAssertEqual(complete.centerControls.count, 2)
         XCTAssertTrue(try HeldOutReport(windows: results, geometry: g, eyeOnlyResponse: .observedPass).passesCompleteGate)
         XCTAssertThrowsError(try HeldOutReport(windows: results + [results[0]], geometry: g))
+    }
+
+    // Break caught: declaring completion without a measured center repeat in each pass.
+    func testCompletionRejectsMissingOrInsufficientCenterControls() throws {
+        let g = try geometry()
+        let model = try fitted(g)
+        let full = try successfulProtocol(model: model, geometry: g)
+        for missingPass in [0, 1, 2] {
+            let windows = full.filter { $0.target != .centerControl || (missingPass != 0 && $0.pass != missingPass) }
+            let report = try HeldOutReport(windows: windows, geometry: g, eyeOnlyResponse: .observedPass)
+            XCTAssertTrue(report.passesNumericalGate)
+            XCTAssertFalse(report.passesCompleteGate)
+            XCTAssertEqual(report.overallValidPredictions, 160)
+        }
+        var insufficient = full
+        insufficient[2] = try successfulWindow(target: .centerControl, pass: 1, model: model,
+                                               geometry: g, count: 15, presentedAt: 14)
+        XCTAssertFalse(try HeldOutReport(windows: insufficient, geometry: g,
+                                        eyeOnlyResponse: .observedPass).passesCompleteGate)
+    }
+
+    // Break caught: accepting both controls even when neither repeats between novel targets.
+    func testCompletionRejectsCenterBeforeOrAfterItsPass() throws {
+        let g = try geometry()
+        let model = try fitted(g)
+        for centerTime in [8.0, 20.0] {
+            var windows = try successfulProtocol(model: model, geometry: g)
+            windows[2] = try successfulWindow(target: .centerControl, pass: 1, model: model,
+                                             geometry: g, presentedAt: centerTime)
+            let report = try HeldOutReport(windows: windows, geometry: g, eyeOnlyResponse: .observedPass)
+            XCTAssertTrue(report.passesNumericalGate)
+            XCTAssertFalse(report.passesCompleteGate)
+        }
+    }
+
+    // Break caught: reusing simultaneous windows, changing target during evaluation, or reversing passes.
+    func testCompletionRejectsOverlappingPresentationsAndReversedPasses() throws {
+        let g = try geometry()
+        let model = try fitted(g)
+        for nextPresentation in [10.5, 11.25] {
+            var windows = try successfulProtocol(model: model, geometry: g)
+            windows[1] = try successfulWindow(target: .upperRight, pass: 1, model: model,
+                                             geometry: g, presentedAt: nextPresentation)
+            XCTAssertFalse(try HeldOutReport(windows: windows, geometry: g,
+                                            eyeOnlyResponse: .observedPass).passesCompleteGate)
+        }
+        let reversedPasses = try successfulProtocol(model: model, geometry: g, passBases: [30, 10])
+        XCTAssertFalse(try HeldOutReport(windows: reversedPasses, geometry: g,
+                                        eyeOnlyResponse: .observedPass).passesCompleteGate)
+    }
+
+    // Break caught: confusing collection-array order with actual presentation chronology.
+    func testValidInterleavedProtocolUsesTimingAndKeepsPhysicalEvidenceExplicit() throws {
+        let g = try geometry()
+        let model = try fitted(g)
+        let windows = Array(try successfulProtocol(model: model, geometry: g).reversed())
+        let firstPresentation = try XCTUnwrap(windows.first(where: { $0.pass == 1 && $0.target == .upperLeft }))
+        XCTAssertEqual(firstPresentation.presentedAt, 10)
+        XCTAssertEqual(firstPresentation.startsAt, 10.5)
+        XCTAssertEqual(firstPresentation.endsAt, 11.5)
+        XCTAssertTrue(try HeldOutReport(windows: windows, geometry: g,
+                                       eyeOnlyResponse: .observedPass).passesCompleteGate)
+        XCTAssertFalse(try HeldOutReport(windows: windows, geometry: g).passesCompleteGate)
+        XCTAssertFalse(try HeldOutReport(windows: windows, geometry: g,
+                                        eyeOnlyResponse: .observedFail).passesCompleteGate)
+    }
+
+    // Break caught: a poor training-location control affecting novel-position error statistics.
+    func testCenterErrorsStaySeparateFromNovelStatistics() throws {
+        let g = try geometry()
+        let model = try fitted(g)
+        var windows = try successfulProtocol(model: model, geometry: g)
+        var center = try HeldOutWindow(target: .centerControl, pass: 1, presentedAt: 14, geometry: g)
+        let offscreen = try EyeFeatures(horizontal: 20, vertical: 0)
+        for slot in 0..<20 {
+            let time = 14.5 + Double(slot) * 0.05 + 0.001
+            try center.record(slot: slot, now: time, observation: observation(offscreen, time: time), calibration: model)
+        }
+        windows[2] = center.finish()
+        let report = try HeldOutReport(windows: windows, geometry: g)
+        XCTAssertTrue(report.passesNumericalGate)
+        XCTAssertTrue(report.passesProtocolGate)
+        XCTAssertEqual(report.overallValidPredictions, 160)
+        XCTAssertLessThan(try XCTUnwrap(report.overallErrors).p90Points, 0.001)
+        XCTAssertGreaterThan(try XCTUnwrap(report.centerControls[0].errors).medianPoints, 300)
+        XCTAssertFalse(report.passesCompleteGate)
     }
 
     // Break caught: meeting coverage by collecting after the declared 1-second window.
@@ -188,17 +269,33 @@ final class GazeShiftCoreTests: XCTestCase {
         GazeObservation(timestamp: time, isTracked: true, leftBlink: blink, rightBlink: blink, features: f)
     }
     private func successfulWindow(target: HeldOutTarget, pass: Int, model: GazeCalibration,
-                                  geometry: RenderGeometry, count: Int = 20) throws -> HeldOutWindowResult {
-        var window = try HeldOutWindow(target: target, pass: pass, presentedAt: 0, geometry: geometry)
+                                  geometry: RenderGeometry, count: Int = 20,
+                                  presentedAt: Double = 0) throws -> HeldOutWindowResult {
+        var window = try HeldOutWindow(target: target, pass: pass, presentedAt: presentedAt, geometry: geometry)
         // Independent inverse of x=150+100h+60v, y=200+30h+100v.
         let x = target.normalized.x * 300 - 150
         let y = target.normalized.y * 400 - 200
         let f = try EyeFeatures(horizontal: (100 * x - 60 * y) / 8200,
                                 vertical: (-30 * x + 100 * y) / 8200)
         for i in 0..<count {
-            let time = 0.5 + Double(i) * 0.05 + 0.001
+            let time = presentedAt + 0.5 + Double(i) * 0.05 + 0.001
             try window.record(slot: i, now: time, observation: observation(f, time: time), calibration: model)
         }
         return window.finish()
+    }
+
+    private func successfulProtocol(model: GazeCalibration, geometry: RenderGeometry,
+                                    passBases: [Double] = [10, 30]) throws -> [HeldOutWindowResult] {
+        // Hand-specified sequence: five 1.5-second presentations, spaced two seconds apart.
+        let targets: [HeldOutTarget] = [.upperLeft, .upperRight, .centerControl, .lowerLeft, .lowerRight]
+        var windows: [HeldOutWindowResult] = []
+        for (passIndex, base) in passBases.enumerated() {
+            for (index, target) in targets.enumerated() {
+                windows.append(try successfulWindow(target: target, pass: passIndex + 1,
+                                                    model: model, geometry: geometry,
+                                                    presentedAt: base + Double(index) * 2))
+            }
+        }
+        return windows
     }
 }
