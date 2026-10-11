@@ -12,9 +12,13 @@ final class CaptureModel: ObservableObject {
         return CaptureSnapshot(sequence: 0, generation: 0, mode: .setupFront, status: .paused, support: nil, renderPacket: nil, eyes: nil, eyeIdentity: nil, hand: nil, handMessage: "Hand unavailable")
         #endif
     }()
-    private lazy var controller = CaptureController { [weak self] next in
-        Task { @MainActor [weak self] in self?.accept(next) }
-    }
+    let events = PassthroughSubject<CaptureEvent, Never>()
+    private lazy var controller = CaptureController(publish: { [weak self] next in
+        DispatchQueue.main.async { [weak self] in self?.accept(next) }
+    }, publishEvent: { [weak self] event in
+        // The serial capture queue enqueues source/completion events in order on the main queue.
+        DispatchQueue.main.async { [weak self] in self?.events.send(event) }
+    })
     func start(_ mode: CaptureMode) { controller.start(mode) }
     func retry() { controller.start(snapshot.mode) }
     func stop() { controller.stop() }
@@ -36,6 +40,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
         return session
     }()
     private let publish: (CaptureSnapshot) -> Void
+    private let publishEvent: (CaptureEvent) -> Void
     private var generation: UInt64 = 0
     private var sequence: UInt64 = 0
     private var mode: CaptureMode = .setupFront
@@ -64,8 +69,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
     private var watchdog: DispatchSourceTimer?
     private lazy var handTracker = HandTracker(ownerQueue: queue) { [weak self] item, result in self?.handFinished(item, result: result) }
 
-    init(publish: @escaping (CaptureSnapshot) -> Void) {
+    init(publish: @escaping (CaptureSnapshot) -> Void, publishEvent: @escaping (CaptureEvent) -> Void) {
         self.publish = publish
+        self.publishEvent = publishEvent
         super.init()
     }
     deinit { watchdog?.cancel() }
@@ -179,6 +185,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
         handMessage = mode == .setupFront ? "Hand unavailable — waiting for both tips" : "Hand tracking off in rear mode"
         handTracker.invalidatePending()
         self.status = status
+        publishEvent(.reset(generation: generation, mode: mode))
     }
 
     private func ensureWatchdog() {
@@ -235,6 +242,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
         let currentEyes = (frame.anchors.first { $0 is ARFaceAnchor } as? ARFaceAnchor).map(Self.eyeObservation)
         rawEyes = currentEyes
         rawEyeIdentity = identity
+        publishEvent(.eyes(currentEyes, identity: identity, mode: mode))
         freshness.acceptEyes(currentEyes, identity: identity, now: now)
         eyes = currentEyes?.isValid == true ? currentEyes : nil
         eyeIdentity = eyes == nil ? nil : identity
@@ -251,7 +259,10 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
     private func handFinished(_ item: HandWork, result: Result<HandObservation?, Error>) {
         let now = ProcessInfo.processInfo.systemUptime
-        guard running, mode == .setupFront, handFreshness.accept(item.identity, now: now) else { return }
+        guard running, mode == .setupFront, item.identity.generation == generation else { return }
+        // Even a stale, empty or failed current-run completion must invalidate an active stroke.
+        publishEvent(.hand(result, identity: item.identity, mode: mode))
+        guard handFreshness.accept(item.identity, now: now) else { return }
         // A fresh completion is usable even if a newer frame is waiting; no output starvation.
         switch result {
         case .success(let observation):

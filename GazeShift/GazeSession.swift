@@ -31,6 +31,7 @@ struct GazeSession {
     private(set) var target: GazeTarget?
     private(set) var trainingIndex = 0
     private(set) var trainingCounts: [Int] = []
+    private(set) var trainingFeatureSummaries: [EyeFeatureSummary?] = []
     private(set) var completedWindows: [HeldOutWindowResult] = []
     private(set) var message = "Not calibrated — choose a camera, then Calibrate"
     private(set) var recoveryCount = 0
@@ -73,6 +74,7 @@ struct GazeSession {
         currentSamples = []
         trainingSources = []
         trainingCounts = []
+        trainingFeatureSummaries = []
         completedWindows = []
         latestObservation = nil
         latestSourceTimestamp = nil
@@ -212,6 +214,7 @@ struct GazeSession {
             return
         }
         trainingCounts.append(currentSamples.count)
+        trainingFeatureSummaries.append(EyeFeatureSummary(features: currentSamples.map(\.features)))
         trainingSamples.append(contentsOf: currentSamples)
         trainingIndex += 1
         guard trainingIndex == GazeRunPolicy.trainingCoordinates.count * GazeRunPolicy.trainingCoordinates.count else {

@@ -53,6 +53,36 @@ public struct ErrorStatistics: Sendable {
     }
 }
 
+/// Observational raw direction-ratio summary; never used by calibration or accuracy gates.
+public struct EyeFeatureSummary: Sendable {
+    public let horizontalMean: Double
+    public let horizontalPopulationSD: Double
+    public let verticalMean: Double
+    public let verticalPopulationSD: Double
+
+    public init?(features: [EyeFeatures]) {
+        guard !features.isEmpty else { return nil }
+        func summarize(_ values: [Double]) -> (mean: Double, populationSD: Double) {
+            let scale = values.map { abs($0) }.max() ?? 0
+            guard scale > 0 else { return (0, 0) }
+            // Scale before squaring so finite raw ratios do not overflow the variance.
+            let normalized = values.map { $0 / scale }
+            let count = Double(values.count)
+            let mean = normalized.reduce(0) { $0 + $1 / count }
+            let variance = normalized.reduce(0) { $0 + (($1 - mean) * ($1 - mean)) / count }
+            return (mean * scale, sqrt(variance) * scale)
+        }
+        let horizontal = summarize(features.map(\.horizontal))
+        let vertical = summarize(features.map(\.vertical))
+        guard [horizontal.mean, horizontal.populationSD, vertical.mean, vertical.populationSD].allSatisfy(\.isFinite)
+        else { return nil }
+        horizontalMean = horizontal.mean
+        horizontalPopulationSD = horizontal.populationSD
+        verticalMean = vertical.mean
+        verticalPopulationSD = vertical.populationSD
+    }
+}
+
 public struct HeldOutWindowResult: Sendable {
     public let target: HeldOutTarget
     public let pass: Int
@@ -67,6 +97,10 @@ public struct HeldOutWindowResult: Sendable {
     public let rejectedSlots: Int
     public let rejectionCounts: [RejectionReason: Int]
     public let errors: ErrorStatistics?
+    /// Prediction minus target in view points; positive is right/down. Diagnostics only.
+    public let medianDXPoints: Double?
+    public let medianDYPoints: Double?
+    public let featureSummary: EyeFeatureSummary?
     public let passesNumericalGate: Bool
     public let validFraction: Double
     public let hasSufficientCoverage: Bool
@@ -74,7 +108,8 @@ public struct HeldOutWindowResult: Sendable {
 
     fileprivate init(target: HeldOutTarget, pass: Int, geometry: RenderGeometry,
                      presentedAt: Double?, startsAt: Double?, endsAt: Double?,
-                     distances: [Double], received: Int, rejections: [RejectionReason: Int]) {
+                     distances: [Double], horizontalErrors: [Double], verticalErrors: [Double],
+                     features: [EyeFeatures], received: Int, rejections: [RejectionReason: Int]) {
         self.target = target
         self.pass = pass
         self.geometry = geometry
@@ -88,9 +123,20 @@ public struct HeldOutWindowResult: Sendable {
         rejectionCounts = rejections
         validFraction = Double(distances.count) / Double(HeldOutPolicy.slots)
         errors = ErrorStatistics(distances: distances, diagonal: geometry.diagonal)
+        medianDXPoints = Self.signedMedian(horizontalErrors)
+        medianDYPoints = Self.signedMedian(verticalErrors)
+        featureSummary = EyeFeatureSummary(features: features)
         hasSufficientCoverage = validFraction >= HeldOutPolicy.minimumValidFraction
             && distances.count >= HeldOutPolicy.minimumDistinctPredictions
         passesNumericalGate = hasSufficientCoverage && errors?.passes == true
+    }
+
+    private static func signedMedian(_ values: [Double]) -> Double? {
+        guard !values.isEmpty, values.allSatisfy(\.isFinite) else { return nil }
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2)
+            ? sorted[middle - 1] * 0.5 + sorted[middle] * 0.5 : sorted[middle]
     }
 }
 
@@ -104,6 +150,9 @@ public struct HeldOutWindow {
     private var recordedSlots = Set<Int>()
     private var receivedTimestamps = Set<Double>()
     private var distances: [Double] = []
+    private var horizontalErrors: [Double] = []
+    private var verticalErrors: [Double] = []
+    private var acceptedFeatures: [EyeFeatures] = []
     private var rejections: [RejectionReason: Int] = [:]
 
     public init(target: HeldOutTarget, pass: Int, presentedAt: Double, geometry: RenderGeometry) throws {
@@ -140,6 +189,9 @@ public struct HeldOutWindow {
                                       y: target.normalized.y * geometry.height)
         // Deliberately no contains/clamp check: finite off-screen predictions are scored too.
         distances.append(hypot(prediction.x - targetPoint.x, prediction.y - targetPoint.y))
+        horizontalErrors.append(prediction.x - targetPoint.x)
+        verticalErrors.append(prediction.y - targetPoint.y)
+        acceptedFeatures.append(features)
     }
 
     public func finish() -> HeldOutWindowResult {
@@ -148,7 +200,9 @@ public struct HeldOutWindow {
         if missing > 0 { completedRejections[.missing, default: 0] += missing }
         return HeldOutWindowResult(target: target, pass: pass, geometry: geometry,
                                    presentedAt: presentedAt, startsAt: startsAt, endsAt: endsAt,
-                                   distances: distances, received: receivedTimestamps.count,
+                                   distances: distances, horizontalErrors: horizontalErrors,
+                                   verticalErrors: verticalErrors, features: acceptedFeatures,
+                                   received: receivedTimestamps.count,
                                    rejections: completedRejections)
     }
 
@@ -197,7 +251,8 @@ public struct HeldOutReport: Sendable {
                 else {
                     novel.append(HeldOutWindowResult(target: target, pass: pass, geometry: geometry,
                                                      presentedAt: nil, startsAt: nil, endsAt: nil,
-                                                     distances: [], received: 0,
+                                                     distances: [], horizontalErrors: [], verticalErrors: [],
+                                                     features: [], received: 0,
                                                      rejections: [.missing: HeldOutPolicy.slots]))
                 }
             }

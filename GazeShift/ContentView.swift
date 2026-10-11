@@ -87,7 +87,8 @@ struct ContentView: View {
             .padding(ScreenStyle.pagePadding)
         }
         .background(ScreenStyle.background.ignoresSafeArea())
-        .onAppear { airTrace.attach(snapshots: capture.$snapshot) }
+        .onAppear { airTrace.attach(events: capture.events) { gaze } }
+        .onChange(of: unvalidatedDemo) { _, on in airTrace.allowUnvalidatedGaze = on }
         .onChange(of: snapshot.sequence) { _, _ in acceptCapture() }
         .onChange(of: scenePhase) { _, phase in if phase == .background { stop() } }
         .onReceive(timer) { _ in
@@ -208,6 +209,7 @@ struct ContentView: View {
     }
 
     private func updateLayout(_ frame: CGRect) {
+        airTrace.layout(frame, scale: displayScale)
         viewportFrame = frame
         capture.layout(frame.size, scale: displayScale)
         gaze.configure(size: frame.size, scale: displayScale, mode: snapshot.mode, generation: snapshot.generation, origin: frame.origin)
@@ -218,8 +220,9 @@ struct ContentView: View {
         gaze.receive(snapshot, now: now)
     }
     private func start(_ mode: CaptureMode) {
+        if mode == .liveRear { airTrace.prepareForRearSelection() }
+        else { airTrace.interrupt() }
         gaze.invalidate("Not calibrated — camera mode selected")
-        airTrace.interrupt()
         capture.start(mode)
     }
     private func stop() {
@@ -332,8 +335,8 @@ struct ContentView: View {
     }
 
     private func startAirMap() {
-        guard airMapBlocker == nil, let geometry = gaze.geometry, let calibration = gaze.calibration else { return }
-        airTrace.begin(geometry: geometry, calibration: calibration, generation: snapshot.generation)
+        guard airMapBlocker == nil else { return }
+        airTrace.begin(gaze: gaze, generation: snapshot.generation)
     }
     private func vector(_ value: SIMD3<Float>) -> String { String(format: "%.3f, %.3f, %.3f", value.x, value.y, value.z) }
     private func blink(_ value: Float?) -> String { value.map { String(format: "%.2f", $0) } ?? "unavailable" }

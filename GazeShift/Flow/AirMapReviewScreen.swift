@@ -10,96 +10,98 @@ enum AirMapPolicy {
     static let offsetStep = 20.0
 }
 
-/// Owns one air-trace attempt plus the reviewed region and explicit patch offset.
-/// Fed from every published capture snapshot, using `GazeSession`'s geometry and calibration.
+/// Owns one air-trace attempt and pending reviewed provenance; no rear region is activated here.
 @MainActor
 final class AirTraceModel: ObservableObject {
     @Published private(set) var flow: AirTraceFlow?
     @Published private(set) var reviewedRegion: ReviewedRegion?
-    /// Explicit user-chosen copy translation in view points. Nil until chosen; no default placement.
     @Published var patchOffset: ScreenPoint?
-    private var calibration: GazeCalibration?
-    private var lastEyeSource = -Double.infinity
-    private var lastHandSource = -Double.infinity
     private var subscription: AnyCancellable?
+    private var currentGaze: (() -> GazeSession)?
+    private var viewportFrame: CGRect?
+    private var displayScale: CGFloat?
+    private var pendingRearReset = false
+    private var retainedInRear = false
+    private var regionGeneration: UInt64?
 
-    /// Subscribe once to `CaptureModel.$snapshot` so no snapshot is skipped by view coalescing.
-    func attach<P: Publisher>(snapshots: P) where P.Output == CaptureSnapshot, P.Failure == Never {
+    /// Raw events preserve nil/error inputs and source identity before display filtering.
+    func attach<P: Publisher>(events: P, gaze: @escaping () -> GazeSession)
+        where P.Output == CaptureEvent, P.Failure == Never {
         guard subscription == nil else { return }
-        subscription = snapshots.sink { [weak self] snapshot in
-            MainActor.assumeIsolated { self?.receive(snapshot) }
+        currentGaze = gaze
+        subscription = events.sink { [weak self] event in
+            MainActor.assumeIsolated { self?.receive(event) }
         }
     }
 
-    /// Start in Front setup with the front-mode calibration that passed its held-out report.
-    func begin(geometry: RenderGeometry, calibration: GazeCalibration, generation: UInt64) {
+    func begin(gaze: GazeSession, generation: UInt64) {
+        guard isEligible(gaze), currentGaze.map({ isEligible($0()) }) == true,
+              let geometry = gaze.geometry else { return }
+        reviewedRegion = nil
+        patchOffset = nil
+        pendingRearReset = false
+        retainedInRear = false
+        regionGeneration = generation
         let fixation = ScreenPoint(x: AirMapPolicy.normalizedFixation.x * geometry.width,
                                    y: AirMapPolicy.normalizedFixation.y * geometry.height)
-        reviewedRegion = nil
-        lastEyeSource = -.infinity
-        lastHandSource = -.infinity
-        self.calibration = calibration
         flow = (try? AirTraceSession(geometry: geometry, fixation: fixation,
                                      eyeStateDescription: AirMapPolicy.eyeStateDescription,
-                                     captureGeneration: generation))
-            .map(AirTraceFlow.init(session:))
+                                     captureGeneration: generation)).map(AirTraceFlow.init(session:))
     }
 
-    /// Leaves air mapping. An accepted region is kept for the rear-mode steps.
-    func end() {
-        flow = nil
-        calibration = nil
+    /// Closing review retains only its original front provenance, pending a deliberate handoff.
+    func end() { flow = nil }
+
+    func layout(_ frame: CGRect, scale: CGFloat) {
+        if let viewportFrame, let displayScale, viewportFrame != frame || displayScale != scale { interrupt() }
+        viewportFrame = frame
+        displayScale = scale
     }
 
     func tick(now: Double, geometry: RenderGeometry?) {
-        guard var current = flow else { return }
+        if let region = reviewedRegion {
+            let old = region.displayGeometry
+            let sameDisplay = geometry.map { $0.width == old.width && $0.height == old.height
+                && $0.scale == old.scale && $0.orientation == old.orientation } == true
+            if !sameDisplay || (!pendingRearReset && !retainedInRear && geometry != old) { interrupt() }
+        }
+        guard validateEligibility(), var current = flow else { return }
         let before = current.state
-        // Layout, generation or calibration-setup change: an unaccepted stroke must be redone.
-        if geometry != current.geometry, before != .accepted { current.interrupt() }
         current.expireInputs(now: now, geometry: geometry ?? current.geometry)
         if current.state != before { flow = current }
     }
 
-    /// Ordered capture-event path (preferred by the reviewed integration guide): every source frame.
-    func ingestEyes(_ eyes: EyeObservation?, identity: FrameIdentity, calibration: GazeCalibration?) {
-        guard var current = flow else { return }
-        current.recordGaze(frame: FlowAdapters.frameKey(identity),
-                           observation: FlowAdapters.gazeObservation(eyes, identity: identity),
-                           calibration: calibration, now: ProcessInfo.processInfo.systemUptime)
-        flow = current
-    }
-
-    /// Ordered capture-event path: every Vision completion, including nil/error results.
-    func ingestHand(_ hand: HandObservation?, identity: FrameIdentity, geometry: RenderGeometry) {
-        guard var current = flow else { return }
-        current.handResult(hand.map(FlowAdapters.handInput), frame: FlowAdapters.frameKey(identity),
-                           now: ProcessInfo.processInfo.systemUptime, geometry: geometry)
-        flow = current
-    }
-
-    /// Host watchdog hook; also called from `tick`.
-    func expireInputs(now: Double, geometry: RenderGeometry) {
-        guard var current = flow else { return }
-        current.expireInputs(now: now, geometry: geometry)
-        flow = current
-    }
-
     func accept() {
-        guard var current = flow else { return }
+        guard validateEligibility(), var current = flow else { return }
         reviewedRegion = try? current.accept()
         flow = current
     }
 
     func redo() {
-        guard var current = flow else { return }
+        guard validateEligibility(), var current = flow else { return }
         reviewedRegion = nil
+        patchOffset = nil
         current.redo()
         flow = current
     }
 
-    /// Mode switch, Stop or Retry. Does nothing once the region is accepted.
+    /// Only the explicit front→rear selection may retain the accepted front provenance.
+    /// shortcut: this is pending provenance only; activate a rear region in the later validated P3 handoff.
+    func prepareForRearSelection() {
+        guard let region = reviewedRegion, let gaze = currentGaze?(), isEligible(gaze),
+              gaze.geometry == region.displayGeometry else { interrupt(); return }
+        flow = nil
+        pendingRearReset = true
+    }
+
+    /// Stop, Retry, front restart, capture failure or a physical layout change clears all cached state.
     func interrupt() {
-        guard var current = flow, current.state != .accepted else { return }
+        reviewedRegion = nil
+        patchOffset = nil
+        pendingRearReset = false
+        retainedInRear = false
+        regionGeneration = nil
+        guard var current = flow else { return }
         current.interrupt()
         flow = current
     }
@@ -109,27 +111,59 @@ final class AirTraceModel: ObservableObject {
         patchOffset = ScreenPoint(x: current.x + dx, y: current.y + dy)
     }
 
-    private func receive(_ snapshot: CaptureSnapshot) {
-        guard var current = flow, current.state == .ready || current.state == .tracing else { return }
-        guard snapshot.mode == .setupFront, snapshot.generation == current.session.captureGeneration else {
-            current.interrupt()
-            flow = current
-            return
+    /// Team-approved "Unvalidated gaze demo": accept the provisional fit instead of a passed report.
+    /// Turning it off re-checks immediately, so active strokes and regions fail closed.
+    var allowUnvalidatedGaze = false {
+        didSet { if oldValue, !allowUnvalidatedGaze { validateEligibility() } }
+    }
+
+    private func isEligible(_ gaze: GazeSession) -> Bool {
+        !gaze.isRunning && gaze.geometry?.mode == .frontSetup
+            && gaze.calibration?.geometry == gaze.geometry && gaze.calibration != nil
+            && (gaze.report?.passesCompleteGate == true || allowUnvalidatedGaze)
+    }
+
+    @discardableResult
+    private func validateEligibility() -> Bool {
+        guard let current = flow else {
+            if reviewedRegion != nil, !pendingRearReset, !retainedInRear,
+               currentGaze.map({ isEligible($0()) }) != true { interrupt() }
+            return false
         }
+        guard let gaze = currentGaze?(), isEligible(gaze), gaze.geometry == current.geometry else {
+            interrupt()
+            return false
+        }
+        return true
+    }
+
+    private func receive(_ event: CaptureEvent) {
         let now = ProcessInfo.processInfo.systemUptime
-        // Raw eyes (including invalid/blinking ones) so rejections stay truthful; one record per frame.
-        if let identity = snapshot.rawEyeIdentity, identity.captureTimestamp > lastEyeSource {
-            lastEyeSource = identity.captureTimestamp
+        switch event {
+        case let .reset(generation, mode):
+            guard let prior = flow?.session.captureGeneration ?? regionGeneration, generation > prior else { return }
+            if pendingRearReset, mode == .liveRear, reviewedRegion != nil {
+                pendingRearReset = false
+                retainedInRear = true
+                regionGeneration = generation
+            } else { interrupt() }
+        case let .eyes(eyes, identity, mode):
+            guard let current = flow, identity.generation >= current.session.captureGeneration else { return }
+            guard identity.generation == current.session.captureGeneration, mode == .setupFront else { interrupt(); return }
+            guard validateEligibility(), var current = flow else { return }
             current.recordGaze(frame: FlowAdapters.frameKey(identity),
-                               observation: FlowAdapters.gazeObservation(snapshot.rawEyes, identity: identity),
-                               calibration: calibration, now: now)
-        }
-        if let hand = snapshot.hand, hand.identity.captureTimestamp > lastHandSource {
-            lastHandSource = hand.identity.captureTimestamp
-            current.handResult(FlowAdapters.handInput(hand), frame: FlowAdapters.frameKey(hand.identity),
+                               observation: FlowAdapters.gazeObservation(eyes, identity: identity),
+                               calibration: currentGaze?().calibration, now: now)
+            flow = current
+        case let .hand(result, identity, mode):
+            guard let current = flow, identity.generation >= current.session.captureGeneration else { return }
+            guard identity.generation == current.session.captureGeneration, mode == .setupFront else { interrupt(); return }
+            guard validateEligibility(), var current = flow else { return }
+            let hand = try? result.get()
+            current.handResult(hand.map(FlowAdapters.handInput), frame: FlowAdapters.frameKey(identity),
                                now: now, geometry: current.geometry)
+            flow = current
         }
-        flow = current
     }
 }
 
@@ -192,10 +226,10 @@ struct AirMapControls: View {
                 Text(instruction(flow.state)).font(.subheadline)
                 Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)
                 HStack {
-                    Button("Redo") { model.redo() }.buttonStyle(.bordered).accessibilityIdentifier("airMapRedo")
+                    Button("Redo") { model.redo() }.buttonStyle(.bordered).disabled(startBlocker != nil).accessibilityIdentifier("airMapRedo")
                     Button("Accept region") { model.accept() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(flow.state != .candidateReady)
+                        .disabled(startBlocker != nil || flow.state != .candidateReady)
                         .accessibilityIdentifier("airMapAccept")
                     Spacer()
                     Button("Close") { model.end() }.buttonStyle(.bordered)
@@ -207,7 +241,7 @@ struct AirMapControls: View {
                     .disabled(startBlocker != nil)
                     .accessibilityIdentifier("airMapStart")
                 if let startBlocker { Text(startBlocker).font(.caption).foregroundStyle(.secondary) }
-                if model.reviewedRegion != nil { Text("Region accepted and kept for live mode.").font(.caption) }
+                if model.reviewedRegion != nil { Text("Accepted front region pending rear calibration; not active in live mode.").font(.caption) }
             }
         }
     }
@@ -230,7 +264,7 @@ struct AirMapControls: View {
         case .ready: "Keep looking at the +. Pinch thumb and index, trace one closed outline in the air, return to the start and release."
         case .tracing: "Tracing — keep your eyes on the +."
         case .candidateReady: "Review the raw trace (yellow) and bounding ellipse (cyan). Accept or Redo."
-        case .accepted: "Region accepted. Choose the copy offset, then continue to rear calibration."
+        case .accepted: "Front region accepted. Choose the offset; rear calibration and handoff remain required."
         case let .invalid(reason): "Stroke cleared — \(Self.describe(reason)). Redo."
         }
     }
