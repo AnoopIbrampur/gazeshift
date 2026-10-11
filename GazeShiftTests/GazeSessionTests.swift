@@ -878,3 +878,18 @@ final class ManualAirTraceModelTests: XCTestCase {
         }
     }
 }
+
+/// Fixture checks for the opt-in demo fallback; they do not prove device accuracy.
+extension GazeSessionTests {
+    func testClampedDemoMarkerPinsOffscreenGazeButBlinkStillHidesIt() throws {
+        var session = try calibrated()
+        session.receive(try snapshot(x: 2.0, y: 0.5, host: 40), now: 40)
+        XCTAssertNil(session.marker(at: 40), "Strict marker still hides off-screen gaze")
+        let pinned = try XCTUnwrap(session.clampedDemoMarker(at: 40))
+        XCTAssertEqual(pinned.x, try XCTUnwrap(session.geometry).width, accuracy: 0.001)
+        session.receive(try snapshot(x: 0.5, y: 0.5, host: 40.02, blink: 0.9), now: 40.02)
+        XCTAssertNil(session.clampedDemoMarker(at: 40.02), "Blink still hides the demo marker")
+        session.invalidate("reset")
+        XCTAssertNil(session.clampedDemoMarker(at: 40.04), "No fit, no demo marker")
+    }
+}

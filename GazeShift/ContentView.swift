@@ -270,7 +270,7 @@ struct ContentView: View {
         let sceneHealthy = snapshot.renderPacket?.identity.isFresh(at: now) == true
         let validated = gaze.report?.passesCompleteGate == true
         let allowed = validated || unvalidatedDemo
-        let liveGaze = sceneHealthy && allowed ? gaze.marker(at: now) : nil
+        let liveGaze = sceneHealthy && allowed ? demoAwareMarker : nil
         // Demo override still uses the MEASURED p90 as the copy safety gap; it is only treated as
         // acceptable because the operator turned the override on. Without a report there is no copy.
         let margin = gaze.report.flatMap { report in
@@ -308,7 +308,7 @@ struct ContentView: View {
 
     /// On-screen diagnosis of every gate between "camera on" and "blur drawn", in pipeline order.
     private var blurChecklist: some View {
-        let marker = gaze.marker(at: now)
+        let marker = demoAwareMarker
         let plan = composition?.plan
         let rows: [(Bool, String)] = [
             (snapshot.status == .ready, "Capture ready — \(snapshot.mode == .setupFront ? "FRONT" : "REAR"): \(snapshot.status.text)"),
@@ -336,13 +336,19 @@ struct ContentView: View {
         .accessibilityIdentifier("blurChecklist")
     }
 
+    /// Validated path uses the strict marker; the opt-in demo falls back to the edge-pinned estimate.
+    private var demoAwareMarker: ScreenPoint? {
+        if let strict = gaze.marker(at: now) { return strict }
+        return unvalidatedDemo ? gaze.clampedDemoMarker(at: now) : nil
+    }
+
     private var gazeStateText: String {
         switch gaze.displayState(at: now) {
         case .uncalibrated: "uncalibrated"
         case .sceneUnavailable: "scene unavailable"
         case .unavailable: "eyes unavailable/blinking"
         case let .recovering(n): "recovering \(n)/\(GazeRunPolicy.recoverySamples)"
-        case .outsideView: "OUTSIDE the camera view (calibration off)"
+        case .outsideView: unvalidatedDemo ? "outside view — demo pins it to the edge" : "OUTSIDE the camera view (calibration off)"
         case .active: "active"
         }
     }
