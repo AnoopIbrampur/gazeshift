@@ -32,6 +32,11 @@ final class AirTraceModel: ObservableObject {
                          now: ProcessInfo.processInfo.systemUptime, geometry: geometry)
     }
 
+    /// The integrator calls this from the capture watchdog, including while callbacks have stopped.
+    func expireInputs(now: Double, geometry: RenderGeometry) {
+        flow?.expireInputs(now: now, geometry: geometry)
+    }
+
     func accept() { reviewedRegion = try? flow?.accept() }
     func redo() { reviewedRegion = nil; flow?.redo() }
     func interrupt() { flow?.interrupt() }
@@ -42,21 +47,20 @@ final class AirTraceModel: ObservableObject {
     }
 }
 
-/// ANO-8: raw air trace + min/max bounding ellipse, explicit Accept/Redo, explicit offset controls.
-/// Touch never draws the region; it only reviews and sets the copy offset.
-struct AirMapReviewScreen: View {
+/// Render only over the SAME measured preview used by capture and calibration.
+/// The caller supplies its current full geometry; a stale trace is never scaled into a new viewport.
+struct AirMapOverlay: View {
     @ObservedObject var model: AirTraceModel
+    let geometry: RenderGeometry
 
     var body: some View {
-        VStack(spacing: 10) {
-            GeometryReader { _ in
-                ZStack {
-                    if let flow = model.flow { overlay(flow) }
-                }
-            }
-            .accessibilityIdentifier("airMapOverlay")
-            controls
+        ZStack(alignment: .topLeading) {
+            if let flow = model.flow, flow.geometry == geometry { overlay(flow) }
         }
+        .frame(width: CGFloat(geometry.width), height: CGFloat(geometry.height), alignment: .topLeading)
+        .clipped()
+        .allowsHitTesting(false)
+        .accessibilityIdentifier("airMapOverlay")
     }
 
     private func overlay(_ flow: AirTraceFlow) -> some View {
@@ -85,8 +89,13 @@ struct AirMapReviewScreen: View {
             .stroke(Color.white, lineWidth: 2)
         }
     }
+}
 
-    private var controls: some View {
+/// Place below/outside the measured preview. Touch reviews and sets offsets; it never traces.
+struct AirMapReviewControls: View {
+    @ObservedObject var model: AirTraceModel
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(instruction).font(.subheadline)
             Text("Assumed approximation — not a retinal measurement.").font(.caption).foregroundStyle(.secondary)

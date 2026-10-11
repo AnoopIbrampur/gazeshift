@@ -43,8 +43,9 @@ public struct AirTracePairer: Sendable {
 
     /// `observation.timestamp` must be the same host-monotonic capture time used for the hand.
     /// Quality uses the reviewed core gate; there is no invented gaze confidence.
+    @discardableResult
     public mutating func recordGaze(frame: CaptureFrameKey, observation: GazeObservation?, calibration: GazeCalibration?,
-                                    geometry: RenderGeometry, now: Double) {
+                                    geometry: RenderGeometry, now: Double) -> AirTraceGazeSample {
         let point = observation.flatMap { calibration?.livePrediction(observation: $0, now: now, geometry: geometry) }
         let sample = AirTraceGazeSample(point: point, qualityValid: point != nil,
                                         captureTimestamp: observation?.timestamp ?? -1,
@@ -53,6 +54,7 @@ public struct AirTracePairer: Sendable {
         while arrival.count > Self.retainedFrames {
             gazeByFrame[arrival.removeFirst()] = nil
         }
+        return sample
     }
 
     /// Returns the gaze recorded for `frame` (consuming it) and converts the hand to view points.
@@ -60,8 +62,9 @@ public struct AirTracePairer: Sendable {
                               geometry: RenderGeometry) -> (hand: AirTraceHandSample?, gaze: AirTraceGazeSample?) {
         let gaze = gazeByFrame.removeValue(forKey: frame)
         if gaze != nil { arrival.removeAll { $0 == frame } }
-        let handSample = hand.map { input in
-            AirTraceHandSample(indexTip: Self.viewPoint(input.indexTip, geometry),
+        let handSample = hand.flatMap { input -> AirTraceHandSample? in
+            guard input.frame == frame else { return nil }
+            return AirTraceHandSample(indexTip: Self.viewPoint(input.indexTip, geometry),
                                thumbTip: Self.viewPoint(input.thumbTip, geometry),
                                indexConfidence: input.indexConfidence, thumbConfidence: input.thumbConfidence,
                                captureTimestamp: input.captureTime, generation: input.frame.generation)
@@ -96,16 +99,25 @@ public struct AirTraceFlow: Sendable {
     public mutating func recordGaze(frame: CaptureFrameKey, observation: GazeObservation?,
                                     calibration: GazeCalibration?, now: Double) {
         guard frame.generation == session.captureGeneration else { return }
-        pairer.recordGaze(frame: frame, observation: observation, calibration: calibration,
-                          geometry: session.geometry, now: now)
+        let gaze = pairer.recordGaze(frame: frame, observation: observation, calibration: calibration,
+                                    geometry: session.geometry, now: now)
+        if !session.observeGaze(gaze, now: now, geometry: session.geometry) { pairer.reset() }
     }
 
     /// Call when the Vision request for `frame` finishes. `hand` is nil when no confident hand was found;
     /// during a stroke that clears the whole stroke (missing pair), as required.
     public mutating func handResult(_ hand: NormalizedHandInput?, frame: CaptureFrameKey,
                                     now: Double, geometry: RenderGeometry) {
+        expireInputs(now: now, geometry: geometry)
+        guard session.state == .ready || session.state == .tracing else { return }
         let pair = pairer.pair(hand: hand, frame: frame, geometry: session.geometry)
         session.consume(hand: pair.hand, gaze: pair.gaze, now: now, geometry: geometry)
+    }
+
+    /// Called by the host watchdog even when neither source nor Vision delivers another event.
+    public mutating func expireInputs(now: Double, geometry: RenderGeometry) {
+        session.expireInputs(now: now, geometry: geometry)
+        if case .invalid = session.state { pairer.reset() }
     }
 
     /// Min/max bounding ellipse of the pending candidate, for the review screen (ANO-8).
