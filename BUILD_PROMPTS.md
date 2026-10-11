@@ -93,6 +93,9 @@ engineering choices, not clinical standards; document changes and reasons.
 Reject nonfinite, missing, untracked or stale data immediately. isTracked
 is transform validity, not gaze confidence. Derive explicit quality checks;
 do not invent a confidence score the API does not provide.
+Keep validation scoring separate from display rejection: finite off-screen
+predictions still count toward accuracy error, even though the live view must
+bypass them. Record missing/rejected samples against the full test window.
 
 On gaze loss, clear the marker and disable the adaptive effect. If the scene
 is healthy show it unchanged and show “Tracking unavailable — original view”.
@@ -241,15 +244,30 @@ target centers, never a pointer. Require a roughly still head, stable distance
 and the selected orientation. Record sample counts and setup conditions.
 
 Evaluate four novel positions at x/y positions 0.25 and 0.75, with two passes.
-Interleave center as a repeat control, but exclude center from novel-position
-held-out statistics because it was a training location. Do not train on test
-samples or feed target position into live inference. Calculate errors in view
-points and viewport-diagonal percentage; report sample count, median and p90
-for the four held-out positions, and center-repeat results separately.
-Declare the demo gate before collecting results: median <=10% and p90 <=20%
-of the diagonal, plus clear eye-only directional response. These permissive
-engineering thresholds are provisional demo criteria, not medical accuracy.
-Do not relax them after seeing failures just to label the phase successful.
+For every target/pass, allow 0.5 seconds to settle, then test for exactly 1 second
+using 20 scheduled evaluation slots at 50 ms intervals. Each slot may consume
+only one fresh sample captured inside that window with a previously unused
+timestamp; missing, duplicate, stale, untracked, closed-eye or nonfinite samples
+remain rejected slots. Do not extend a window until enough good samples arrive.
+
+Count expected slots (20), received unique samples, valid finite predictions,
+rejected slots and each rejection reason. Quality-eligible finite off-screen
+predictions MUST remain in accuracy scoring before the live renderer rejects
+them; never clamp or discard them to improve error statistics. Report aggregate
+and per-target/pass errors in view points and viewport-diagonal percentage,
+sample counts, valid fraction and rejected-sample distribution.
+
+Predeclare the gate: every target/pass must have >=80% valid finite predictions
+of its 20 scheduled slots and >=10 distinct prediction timestamps; missing or
+insufficient windows fail. Median error must be <=10% and p90 <=20% of the
+diagonal both overall and per target/pass, plus clear eye-only response. A rate
+too low to meet coverage is a failed/not-passed gate, not permission to change
+the schedule. These provisional engineering criteria are not medical accuracy;
+do not lower coverage or accuracy requirements after seeing failures.
+
+Interleave center once per pass as a repeat control; exclude it from novel-
+position statistics because it was a training location. Report it separately.
+Do not train on test samples or feed target position into live inference.
 
 With the head still, look left/right/up/down and verify marker response. Then
 hold fixation and move the head separately to expose sensitivity. Test held-out
@@ -263,13 +281,16 @@ Allow explicit recalibration. Keep it in memory for this session; no profiles.
 Use fresh tracked/finite data and the configured maximum age. Reject closed-eye
 samples when either ARKit eye-blink coefficient reaches MAX_EYE_BLINK=0.6, a
 provisional named threshold to verify on this phone. Reject unavailable eye
-quality data and invalid/off-screen predictions; do not clamp them into fake
-edge gaze. Those expression coefficients are not gaze-confidence scores.
+quality data and invalid/off-screen predictions from the live marker/warp;
+retain quality-eligible finite off-screen predictions in test error scoring.
+Do not clamp them into fake edge gaze. Expression coefficients are not gaze
+confidence scores.
 Any smoothing must be light and measured; it adds delay and cannot fix bias.
 
 Deliverable: calibrated marker, minimal runnable fit/coordinate checks and
 held-out test record with evidence provenance. Check synthetic known mappings,
-degenerate inputs, orientation/crop/scale assumptions and finite output.
+degenerate inputs, orientation/crop/scale assumptions and finite output. Check
+that missing target windows fail and finite off-screen errors remain scored.
 Run/build, commit and stop. Minute-90 gate: only live eye-only response plus
 the predeclared held-out criteria allow the gaze-controlled warp to proceed.
 ```
@@ -347,6 +368,8 @@ scene show the unmodified scene and the exact
 message “Tracking unavailable — original view”. Keep it until three consecutive
 fresh valid samples with distinct timestamps arrive, then clear it and resume.
 Never leave a stale warp or clamp off-screen predictions into valid edge gaze.
+During validation, preserve those finite predictions for P2's error/coverage
+record before rejecting them from the live display path.
 
 Independently track scene freshness and session interruptions. When the rear
 source stops updating, show “Scene unavailable”/“Paused” visibly. Do not claim
@@ -387,9 +410,13 @@ is not end-to-end latency; use a synchronized external observation if claiming
 that. Do not manufacture missing timings or report simulator metrics as phone
 performance. Record device/iOS, orientation, viewport, lighting and distance.
 
-Repeat held-out center/edge targets, including a later pass after several
-minutes to expose drift. Report errors in points and viewport-diagonal percent,
-sample count, median/p90, failures and calibration duration. Separate eye-only
+Repeat P2's four held-out positions with the same fixed windows, coverage and
+per-target/pass accuracy gates, including a later pass to expose drift. Report
+expected/received/valid/rejected counts, reasons, valid fractions and errors
+in points/viewport percent, aggregate and per target/pass. Retain finite
+off-screen errors before display rejection. Keep center repeats and additional
+edge probes separate from the four-position statistics. Report failures and
+calibration duration; never omit insufficient windows. Separate eye-only
 motion with a still head from head movement with fixed fixation. Note eyeglass,
 lighting, blinking and distance effects only if actually tested. Do not claim
 general reliability from one person's successful seated run.
