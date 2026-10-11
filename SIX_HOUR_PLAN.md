@@ -19,7 +19,7 @@
 - `lookAtPoint` is face-relative. Calibrate physical-display gaze in each mode and pass P2's held-out fixed-window coverage/error gates, including after the switch.
 - Air tracing is required. Touch Review/Redo controls are allowed; touchscreen drawing, head pose or scripted gaze cannot replace the requested inputs.
 - A user-drawn approximate ellipse is not a retinal measurement. Preserve its fixation-relative center offset; no patient diagnosis, PRL inference, independent per-eye map or promised benefit.
-- Normal Live assist has no artificial blur. Optional observer simulation is off by default, applies blur last and uses original-frame pixels for copying.
+- Normal Live assist has no artificial blur. Required Demo comparison offers Original / Simulated blur / Simulated blur + copy in identical full-viewport geometry; simulation stays off until selected, uses original source pixels and applies blur last.
 - Source/destination must fit valid image/view bounds; destination must clear the approximate region and an error-based safety gap. Invalid placement bypasses to original, never clamps or invents content.
 - Keep geometry, pose and distance stable; changes invalidate calibration/region. Copied content moves with gaze and may move when looked at; this is a peripheral-viewing experiment.
 - No accounts, cloud frame upload, hardware purchase, clinical participants or feature expansion. Local prerecorded scene fallback must be labeled and retain real air tracing/live gaze.
@@ -62,7 +62,7 @@
 - [ ] Copy it to one user-chosen offset over the original scene. Explain source duplication, destination occlusion and gaze-chasing limitations.
 - [ ] Require valid in-bounds source and destination; conservatively reject destination overlap with the region plus the live-error safety gap. Show “No valid placement — original view” on rejection.
 - [ ] On invalid gaze, clear marker/copy and show “Tracking unavailable — original view” over a healthy source until three distinct fresh valid samples recover. A stalled scene instead shows “Scene unavailable” or “Paused”.
-- [ ] Optional observer variants use the same source frame, copy before blur and blur last; normal full-viewport live assist stays unblurred.
+- [ ] Implement all three required Demo comparison views with the same frame/mask/viewport; copy before blur and blur last. A labeled frozen comparison is allowed, separate from real-time gaze evidence. Normal Live assist stays unblurred.
 - [ ] Check offset preservation, source-before-blur/output, coordinate transforms, disabled-copy identity, bounds/overlap and loss/recovery. Commit the verified checkpoint.
 
 ## P5 — real-device verification (minutes 210–300)
@@ -75,11 +75,11 @@
 
 ## P6 — evidence, review and integration (minutes 300–360)
 
-- [ ] Record actual air tracing/fixation, ellipse review, camera-switch/calibration results, live eye-only relocation, Original comparison and failure/recovery behavior.
+- [ ] Record actual air tracing/fixation, ellipse review, camera-switch/calibration results, live eye-only relocation, all three required blur-comparison views and failure/recovery behavior. Label frozen comparisons as frozen.
 - [ ] Verify the saved recording plays; use an external hand/eye view when possible. Keep assumed-region and recorded-source labels visible; no regenerated evidence.
 - [ ] Prepare an honest pitch covering the technical result, approximation, duplication/occlusion/gaze-chasing limits and future comparison with magnification.
 - [ ] Commit and obtain independent review of final BASE/HEAD; resolve all Critical/Important findings before permitted merge/push and verify remote state.
-- [ ] Report any missing device test, recording, review or integration gate at minute 360. A build alone does not prove either requested live input.
+- [ ] Report any missing required blur comparison, device test, recording, review or integration gate at minute 360; do not cut scope silently. A build alone does not prove either requested live input.
 
 ## After the hackathon
 

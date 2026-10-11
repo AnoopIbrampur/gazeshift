@@ -30,7 +30,7 @@ Air tracing requires a stationary fixation reference and valid hand/gaze signals
 
 In Live assist, the region follows gaze plus the stored offset. Copy its enclosing rectangle from the original unblurred frame to one user-chosen offset, over the original scene. Source and destination must fit valid image/view bounds; destination must avoid the assumed region plus a provisional live-gaze-error margin. Otherwise show “No valid placement — original view” and bypass. No recursive sampling, auto-clamping, invented pixels or full-scene radial warp. The copy duplicates content, covers destination content and can move again when looked at; this is a peripheral-viewing experiment.
 
-Normal Live assist adds no artificial blur. Optional observer simulation is off by default and applies the same assumed blur last to original and copied variants of the same frame. Never sample already blurred pixels. Live assist uses the full calibrated viewport; altered layouts require recalibration.
+Normal Live assist adds no artificial blur. The required Demo comparison shows Original / Simulated blur / Simulated blur + copy using the same frame, mask and full-viewport geometry. Simulation stays off until selected and is clearly labeled; copy original pixels first and apply the identical assumed blur last to both simulated views. Never sample already blurred pixels. A labeled frozen-frame comparison is allowed but cannot prove real-time gaze behavior; record that separately. Missing comparison is unfinished scope, not an optional omission.
 
 On invalid gaze, clear the indicator/copy and show the healthy original scene with “Tracking unavailable — original view” until three fresh valid samples recover. A failed source instead shows “Scene unavailable” or “Paused”; never label a frozen frame live. Keep finite off-screen estimates in accuracy scoring before rejecting them from the display.
 
@@ -42,7 +42,7 @@ The 360-minute plan is conditional on a ready Mac/Xcode/signing setup and an ava
 2. Minutes 90–150: air-trace and review the approximate ellipse, switch modes, refit and validate live gaze. Minute 150 is a second go/no-go gate.
 3. Minutes 150–210: implement one original-image rectangular copy with explicit placement checks and loss/recovery.
 4. Minutes 210–300: test mapping, switching, gaze, placement, drift and failures on the device.
-5. Final 60 minutes: record actual air tracing and eye-driven relocation, prepare the pitch and finish review.
+5. Final 60 minutes: record air tracing, live eye-driven relocation and the required blur comparison, prepare the pitch and finish review.
 
 Gesture tracking and the second calibration make this optimistic. Setup during the event consumes the same six-hour window; missed gates are reported, not silently removed.
 
