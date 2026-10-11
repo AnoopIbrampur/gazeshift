@@ -44,9 +44,20 @@ public struct AirTracePairer: Sendable {
     /// `observation.timestamp` must be the same host-monotonic capture time used for the hand.
     /// Quality uses the reviewed core gate; there is no invented gaze confidence.
     @discardableResult
+    /// `unvalidatedFixation`: team-approved demo override. Eyes must still be fresh, tracked, open and have
+    /// features (core quality gate), but their calibrated POSITION is not checked; the sample is placed at
+    /// this fixation. Never use it for evidence.
     public mutating func recordGaze(frame: CaptureFrameKey, observation: GazeObservation?, calibration: GazeCalibration?,
-                                    geometry: RenderGeometry, now: Double) -> AirTraceGazeSample {
-        let point = observation.flatMap { calibration?.livePrediction(observation: $0, now: now, geometry: geometry) }
+                                    geometry: RenderGeometry, now: Double,
+                                    unvalidatedFixation: ScreenPoint? = nil) -> AirTraceGazeSample {
+        let point: ScreenPoint?
+        if let unvalidatedFixation {
+            point = observation.flatMap { obs in
+                GazeQuality.rejectionReason(observation: obs, now: now) == nil ? unvalidatedFixation : nil
+            }
+        } else {
+            point = observation.flatMap { calibration?.livePrediction(observation: $0, now: now, geometry: geometry) }
+        }
         let sample = AirTraceGazeSample(point: point, qualityValid: point != nil,
                                         captureTimestamp: observation?.timestamp ?? -1,
                                         generation: frame.generation)
@@ -96,11 +107,13 @@ public struct AirTraceFlow: Sendable {
     public var geometry: RenderGeometry { session.geometry }
 
     /// Call once per ARFrame with that frame's eye observation (nil when ARKit reported no face).
+    /// `ignoreGazePosition` is the opt-in Unvalidated gaze demo: eye quality is still enforced, position is not.
     public mutating func recordGaze(frame: CaptureFrameKey, observation: GazeObservation?,
-                                    calibration: GazeCalibration?, now: Double) {
+                                    calibration: GazeCalibration?, now: Double, ignoreGazePosition: Bool = false) {
         guard frame.generation == session.captureGeneration else { return }
         let gaze = pairer.recordGaze(frame: frame, observation: observation, calibration: calibration,
-                                    geometry: session.geometry, now: now)
+                                    geometry: session.geometry, now: now,
+                                    unvalidatedFixation: ignoreGazePosition ? session.fixation : nil)
         if !session.observeGaze(gaze, now: now, geometry: session.geometry) { pairer.reset() }
     }
 

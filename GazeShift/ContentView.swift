@@ -96,6 +96,10 @@ struct ContentView: View {
         .background(ScreenStyle.background.ignoresSafeArea())
         .onAppear { airTrace.attach(events: capture.events) { gaze } }
         .onChange(of: unvalidatedDemo) { _, on in airTrace.allowUnvalidatedGaze = on }
+        // Demo: jump straight to the blur once a region is accepted, so nothing is hidden behind toggles.
+        .onChange(of: airTrace.reviewedRegion != nil) { _, accepted in
+            if accepted, unvalidatedDemo { viewMode = .comparison(.simulatedBlur) }
+        }
         .onChange(of: snapshot.sequence) { _, _ in acceptCapture() }
         .onChange(of: scenePhase) { _, phase in if phase == .background { stop() } }
         .onReceive(timer) { _ in
@@ -306,7 +310,7 @@ struct ContentView: View {
             Toggle("Unvalidated gaze demo", isOn: $unvalidatedDemo)
                 .accessibilityIdentifier("unvalidatedDemoToggle")
             Text(unvalidatedDemo
-                 ? "ON: air map and simulation use the provisional calibration even though its accuracy test did not pass. For showing the idea only — not evidence."
+                 ? "ON: air map and simulation use the provisional calibration even though its accuracy test did not pass. While tracing, eyes must stay open and tracked but their exact position is NOT checked. For showing the idea only — not evidence."
                  : "Off: air map and simulation wait for a passed calibration report. Turning the demo off clears regions accepted without a passed front report; draw those again in Front setup.")
                 .font(.caption).foregroundStyle(unvalidatedDemo ? Color.orange : Color.secondary)
         }
@@ -334,6 +338,12 @@ struct ContentView: View {
         }
         if unvalidatedDemo, gaze.report?.overallErrors == nil, viewMode != .comparison(.simulatedBlur) {
             notes.append("Copy needs a held-out test result for its safety gap — run Test first")
+        }
+        if snapshot.mode == .liveRear {
+            notes.append("Hand tracking is front-camera only — trace in Front setup, then press Rear + eyes")
+        }
+        if gaze.calibration == nil {
+            notes.append("Calibrate in this camera mode — the blur follows the calibrated gaze")
         }
         if airTrace.patchOffset == nil, viewMode != .comparison(.simulatedBlur), viewMode != .comparison(.original) {
             notes.append("Choose a copy offset in AIR MAP for copy modes")
