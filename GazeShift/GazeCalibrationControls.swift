@@ -118,9 +118,11 @@ extension GazeSession {
             "GazeShift experimental display-gaze test",
             "Mode: \(geometry.mode.rawValue); portrait; viewport \(geometry.width) × \(geometry.height) pt; scale \(geometry.scale)",
             "Setup: \(geometry.viewingSetupID)",
-            "Viewing distance/head stability: requested, not measured automatically",
+            "Viewing distance/head stability: requested; AR face-camera pose below is an estimate, not physical-screen registration",
             "Training samples by target (9 required): \(trainingCounts)",
             "Observational diagnostics only: signed errors and raw features do not change the fit, scoring or declared accuracy gates.",
+            "Pose: inverse same-frame AR camera world transform × face world transform; xyz in AR transform units; rotation quaternion xyzw in active-camera axes. Angular change uses shortest q/−q-equivalent angle in degrees.",
+            "Delivery counts are inclusive cumulative-counter spans between first/last distinct consumed frames, not exact window totals; boundary data can be missing. Main snapshots include hand/status emits. Consumed frames require capture and consumption inside the 1s window; pose includes invalid gaze frames.",
             "Features: face-relative eye-midpoint → lookAtPoint direction ratios → personal affine fit → view points",
             "Normalized view = points / viewport; drawing pixels = points × scale. Camera-image UV transform is separate.",
             "Timing: host monotonic capture estimates; UI target acknowledgement; no measured photon latency",
@@ -134,12 +136,14 @@ extension GazeSession {
         for (index, summary) in trainingFeatureSummaries.enumerated() {
             let positions = GazeRunPolicy.trainingCoordinates
             lines.append("Training target \(index + 1) (\(positions[index % positions.count]), \(positions[index / positions.count]) normalized): \(featureStatistics(summary))")
+            if trainingDiagnostics.indices.contains(index) { lines.append(contentsOf: trainingDiagnostics[index].reportLines) }
         }
         lines.append("Center controls are reported separately and excluded from novel accuracy:")
-        for result in completedWindows {
+        for (index, result) in completedWindows.enumerated() {
             lines.append("pass \(result.pass) \(result.target.rawValue): received \(result.receivedUniqueSamples), valid \(result.validPredictions)/\(result.expectedSlots), rejected \(result.rejectedSlots); \(statistics(result.errors)); \(rejections(result.rejectionCounts))")
             lines.append("  \(signedStatistics(result)); \(featureStatistics(result.featureSummary))")
             lines.append("  presented \(timestamp(result.presentedAt)); capture window [\(timestamp(result.startsAt)), \(timestamp(result.endsAt))) host seconds")
+            if evaluationDiagnostics.indices.contains(index) { lines.append(contentsOf: evaluationDiagnostics[index].reportLines) }
         }
         lines.append("Finite offscreen predictions remain in accuracy scores; the live dot rejects them. Missing features (including a failed finite-feature conversion) are missingQuality. Raw unavailable camera samples are missing.")
         lines.append("Computed from app inputs; this report does not prove physical eye-only movement, clinical retinal mapping, patient benefit, or a playable device demonstration.")

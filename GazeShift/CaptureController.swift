@@ -13,6 +13,7 @@ final class CaptureModel: ObservableObject {
         #endif
     }()
     let events = PassthroughSubject<CaptureEvent, Never>()
+    private var deliveryCounter = CaptureDeliveryCounter()
     private lazy var controller = CaptureController(publish: { [weak self] next in
         DispatchQueue.main.async { [weak self] in self?.accept(next) }
     }, publishEvent: { [weak self] event in
@@ -26,7 +27,8 @@ final class CaptureModel: ObservableObject {
     func rendererFailed(_ message: String) { controller.rendererFailed(message) }
     private func accept(_ next: CaptureSnapshot) {
         guard next.generation >= snapshot.generation, next.sequence > snapshot.sequence else { return }
-        snapshot = next.forDisplay(at: ProcessInfo.processInfo.systemUptime)
+        let now = ProcessInfo.processInfo.systemUptime
+        snapshot = deliveryCounter.record(next.forDisplay(at: now), at: now)
     }
 }
 
@@ -66,6 +68,9 @@ final class CaptureController: NSObject, ARSessionDelegate {
     private var handMessage = "Hand unavailable"
     private var handFreshness = HandResultFreshness(generation: 0)
     private var captureClock = CaptureClock()
+    private var sourceFrameCount: UInt64 = 0
+    private var frameDiagnostics: CaptureFrameDiagnostics?
+    private var configuredFPS: Int?
     private var watchdog: DispatchSourceTimer?
     private lazy var handTracker = HandTracker(ownerQueue: queue) { [weak self] item, result in self?.handFinished(item, result: result) }
 
@@ -166,6 +171,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
             configuration = rear
         }
         running = true
+        configuredFPS = configuration.videoFormat.framesPerSecond
         status = .sceneUnavailable
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         emit()
@@ -182,6 +188,8 @@ final class CaptureController: NSObject, ARSessionDelegate {
         hand = nil
         handFreshness = HandResultFreshness(generation: generation)
         captureClock = CaptureClock()
+        sourceFrameCount = 0
+        frameDiagnostics = nil
         handMessage = mode == .setupFront ? "Hand unavailable — waiting for both tips" : "Hand tracking off in rear mode"
         handTracker.invalidatePending()
         self.status = status
@@ -222,6 +230,7 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard running, frame.timestamp > cutoffTimestamp else { return }
+        sourceFrameCount &+= 1
         let now = ProcessInfo.processInfo.systemUptime
         guard let identity = captureClock.identity(generation: generation, captureTimestamp: frame.timestamp, receivedAt: now) else { return }
         guard let geometry = DisplayGeometry(viewport: viewport, displayTransform: frame.displayTransform(for: .portrait, viewportSize: viewport), orientation: .right, mirrored: mode == .setupFront) else {
@@ -239,7 +248,11 @@ final class CaptureController: NSObject, ARSessionDelegate {
         guard freshness.acceptScene(identity, now: now) else { return }
         packet = RenderPacket(identity: identity, image: frame.capturedImage, geometry: geometry, mode: mode)
         // Read anchors from this exact frame. No cached anchors get a fresh timestamp.
-        let currentEyes = (frame.anchors.first { $0 is ARFaceAnchor } as? ARFaceAnchor).map(Self.eyeObservation)
+        let face = frame.anchors.first { $0 is ARFaceAnchor } as? ARFaceAnchor
+        let currentEyes = face.map(Self.eyeObservation)
+        frameDiagnostics = CaptureFrameDiagnostics(identity: identity, sourceFrameCount: sourceFrameCount,
+            pose: face.flatMap { $0.isTracked ? FaceCameraPose(cameraTransform: frame.camera.transform, faceTransform: $0.transform) : nil },
+            faceAnchorID: face?.identifier, configuredFPS: configuredFPS, thermalState: thermalStateText)
         rawEyes = currentEyes
         rawEyeIdentity = identity
         publishEvent(.eyes(currentEyes, identity: identity, mode: mode))
@@ -255,6 +268,16 @@ final class CaptureController: NSObject, ARSessionDelegate {
         let left = face.leftEyeTransform.columns.3
         let right = face.rightEyeTransform.columns.3
         return EyeObservation(lookAtPoint: face.lookAtPoint, leftEyeTranslation: SIMD3(left.x, left.y, left.z), rightEyeTranslation: SIMD3(right.x, right.y, right.z), leftBlink: face.blendShapes[.eyeBlinkLeft]?.floatValue, rightBlink: face.blendShapes[.eyeBlinkRight]?.floatValue, isTracked: face.isTracked)
+    }
+
+    private var thermalStateText: String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: "nominal"
+        case .fair: "fair"
+        case .serious: "serious"
+        case .critical: "critical"
+        @unknown default: "unknown"
+        }
     }
 
     private func handFinished(_ item: HandWork, result: Result<HandObservation?, Error>) {
@@ -293,6 +316,6 @@ final class CaptureController: NSObject, ARSessionDelegate {
 
     private func emit() {
         sequence &+= 1
-        publish(CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: status, support: support, renderPacket: packet, eyes: eyes, eyeIdentity: eyeIdentity, hand: hand, handMessage: handMessage, rawEyes: rawEyes, rawEyeIdentity: rawEyeIdentity))
+        publish(CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: status, support: support, renderPacket: packet, eyes: eyes, eyeIdentity: eyeIdentity, hand: hand, handMessage: handMessage, rawEyes: rawEyes, rawEyeIdentity: rawEyeIdentity, frameDiagnostics: frameDiagnostics))
     }
 }
