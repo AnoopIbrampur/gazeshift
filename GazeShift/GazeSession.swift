@@ -55,9 +55,12 @@ struct GazeSession {
 
     mutating func configure(size: CGSize, scale: CGFloat, mode: CaptureMode, generation: UInt64, origin: CGPoint = .zero) {
         guard origin.x.isFinite, origin.y.isFinite else { invalidate("Display position unavailable"); geometry = nil; return }
+        // The setup ID names the PHYSICAL display placement only. The capture generation is not physical;
+        // a new generation still invalidates calibration through the guard below, but keeping it out of the
+        // ID lets core `retainedForModeTransition` accept the deliberate same-display front→rear handoff.
         let next = try? RenderGeometry(width: Double(size.width), height: Double(size.height), scale: Double(scale),
                                        orientation: .portrait, mode: mode == .setupFront ? .frontSetup : .rearLive,
-                                       viewingSetupID: "capture-generation-\(generation)-origin-\(origin.x)-\(origin.y)")
+                                       viewingSetupID: "viewport-origin-\(origin.x)-\(origin.y)")
         guard next != geometry || generation != self.generation || mode != self.mode else { return }
         self.geometry = next
         self.mode = mode
