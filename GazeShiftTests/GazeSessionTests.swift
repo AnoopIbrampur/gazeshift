@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 import CoreVideo
 import GazeShiftCore
 @testable import GazeShift
@@ -227,5 +228,264 @@ final class GazeSessionTests: XCTestCase {
         return CaptureSnapshot(sequence: 1, generation: generation, mode: .liveRear, status: .ready,
                                support: nil, renderPacket: scene ? packet : nil, eyes: eyes, eyeIdentity: identity,
                                hand: nil, handMessage: "Hand unavailable", rawEyes: eyes, rawEyeIdentity: identity)
+    }
+}
+
+/// Synthetic adapter fixtures exercise the actual app model; they do not prove sensor behavior.
+@MainActor
+final class AirTraceModelTests: XCTestCase {
+    private let events = PassthroughSubject<CaptureEvent, Never>()
+    private var gaze = GazeSession()
+
+    func testNilHandCompletionClearsStrokeBeforeWatchdog() throws {
+        let model = try startedModel()
+        sendFrame(0)
+        XCTAssertEqual(model.flow?.state, .tracing)
+        sendFrame(1, hasHand: false)
+        sendFrame(2)
+        XCTAssertEqual(model.flow?.state, .invalid(.missingPair))
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+    }
+
+    func testVisionErrorCompletionCannotBeBridgedByNextGoodFrame() throws {
+        let model = try startedModel()
+        sendFrame(0)
+        let identity = FrameIdentity(generation: 1, captureTimestamp: 7000.02,
+                                     receivedAt: ProcessInfo.processInfo.systemUptime)
+        events.send(.eyes(eyes(x: 0.5, y: 0.5), identity: identity, mode: .setupFront))
+        events.send(.hand(.failure(NSError(domain: "VisionFixture", code: 1)), identity: identity, mode: .setupFront))
+        sendFrame(2)
+        XCTAssertEqual(model.flow?.state, .invalid(.missingPair))
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+    }
+
+    func testMissingRawEyesCannotBeBridgedByNextGoodFrame() throws {
+        let model = try startedModel()
+        sendFrame(0)
+        sendFrame(1, hasHand: false, hasRawIdentity: false)
+        sendFrame(2)
+        XCTAssertEqual(model.flow?.state, .invalid(.invalidGaze))
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+    }
+
+    func testBadEyesOnFrameSkippedByVisionClearStroke() throws {
+        let model = try startedModel()
+        sendFrame(0)
+        let identity = FrameIdentity(generation: 1, captureTimestamp: 7000.02,
+                                     receivedAt: ProcessInfo.processInfo.systemUptime)
+        events.send(.eyes(nil, identity: identity, mode: .setupFront))
+        sendFrame(2)
+        XCTAssertEqual(model.flow?.state, .invalid(.invalidGaze))
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+    }
+
+    func testRevokedCalibrationApprovalClearsStrokeAndBlocksRedo() throws {
+        let model = try startedModel()
+        sendFrame(0)
+        gaze.recordEyeOnly(.observedFail)
+        model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+        XCTAssertEqual(model.flow?.state, .invalid(.interrupted))
+        model.redo()
+        XCTAssertNotEqual(model.flow?.state, .ready)
+    }
+
+    func testClosedAcceptedRegionIsClearedByStopOrRetry() throws {
+        let model = try acceptedModel()
+        model.end()
+        model.interrupt()
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.patchOffset)
+    }
+
+    func testClosedAcceptedRegionIsClearedByPhysicalLayoutChange() throws {
+        let model = try acceptedModel()
+        model.end()
+        gaze.configure(size: CGSize(width: 301, height: 400), scale: 3, mode: .setupFront, generation: 1)
+        model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.patchOffset)
+    }
+
+    func testRevocationBlocksAcceptBeforeNextTimerOrCaptureEvent() throws {
+        for revoke in approvalRevocations {
+            let model = try candidateModel()
+            revoke()
+            model.accept()
+            XCTAssertEqual(model.flow?.state, .invalid(.interrupted))
+            XCTAssertNil(model.reviewedRegion)
+            XCTAssertNil(model.flow?.candidate)
+        }
+    }
+
+    func testRevocationBlocksRedoBeforeNextTimerOrCaptureEvent() throws {
+        for revoke in approvalRevocations {
+            let model = try startedModel()
+            sendFrame(0)
+            revoke()
+            model.redo()
+            XCTAssertEqual(model.flow?.state, .invalid(.interrupted))
+            XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+        }
+    }
+
+    func testRevocationClearsTraceOnNextSourceCallback() throws {
+        for revoke in approvalRevocations {
+            let model = try startedModel()
+            sendFrame(0)
+            revoke()
+            sendFrame(1)
+            XCTAssertEqual(model.flow?.state, .invalid(.interrupted))
+            XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+        }
+    }
+
+    func testClosedAcceptedFrontRegionClearsWhenApprovalIsRevoked() throws {
+        let model = try acceptedModel()
+        model.end()
+        gaze.recordEyeOnly(.observedFail)
+        model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.patchOffset)
+    }
+
+    func testClosedAcceptedRegionClearsOnUnpreparedCaptureRestart() throws {
+        for mode in [CaptureMode.setupFront, .liveRear] {
+            let model = try acceptedModel()
+            model.end()
+            events.send(.reset(generation: 2, mode: mode))
+            XCTAssertNil(model.reviewedRegion)
+            XCTAssertNil(model.patchOffset)
+        }
+    }
+
+    func testExplicitRearSelectionRetainsOnlyPendingFrontProvenance() throws {
+        let model = try acceptedModel()
+        let front = try XCTUnwrap(model.reviewedRegion)
+        model.end()
+        model.prepareForRearSelection()
+        gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+        events.send(.reset(generation: 2, mode: .liveRear))
+        model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+        XCTAssertEqual(model.reviewedRegion?.normalizedOffset, front.normalizedOffset)
+        XCTAssertEqual(model.reviewedRegion?.normalizedRadii, front.normalizedRadii)
+        XCTAssertEqual(model.reviewedRegion?.displayGeometry, front.displayGeometry)
+        XCTAssertEqual(model.reviewedRegion?.provenance.captureGeneration, 1)
+        XCTAssertEqual(model.reviewedRegion?.displayGeometry.mode, .frontSetup)
+        XCTAssertEqual(model.patchOffset, ScreenPoint(x: 20, y: 0))
+        XCTAssertThrowsError(try front.retainedForModeTransition(to: XCTUnwrap(gaze.geometry)))
+        events.send(.reset(generation: 3, mode: .liveRear))
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.patchOffset)
+    }
+
+    func testRevokedFrontApprovalCannotBeRetainedByRearSelection() throws {
+        let model = try acceptedModel()
+        model.end()
+        gaze.recordEyeOnly(.observedFail)
+        model.prepareForRearSelection()
+        events.send(.reset(generation: 2, mode: .liveRear))
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.patchOffset)
+    }
+
+    func testClosedAcceptedRegionClearsOnPhysicalOriginOrScaleChange() throws {
+        for (frame, scale) in [(CGRect(x: 10, y: 0, width: 300, height: 400), CGFloat(3)),
+                               (CGRect(x: 0, y: 0, width: 300, height: 400), CGFloat(2))] {
+            let model = try acceptedModel()
+            model.end()
+            model.layout(frame, scale: scale)
+            XCTAssertNil(model.reviewedRegion)
+            XCTAssertNil(model.patchOffset)
+        }
+    }
+
+    private var approvalRevocations: [() -> Void] {
+        [{ self.gaze.startCalibration() }, { self.gaze.startEvaluation() },
+         { self.gaze.recordEyeOnly(.observedFail) }]
+    }
+
+    private func startedModel() throws -> AirTraceModel {
+        gaze = try approvedGaze()
+        let model = AirTraceModel()
+        model.attach(events: events) { self.gaze }
+        model.layout(CGRect(x: 0, y: 0, width: 300, height: 400), scale: 3)
+        model.begin(gaze: gaze, generation: 1)
+        return model
+    }
+
+    private func acceptedModel() throws -> AirTraceModel {
+        let model = try candidateModel()
+        model.accept()
+        XCTAssertNotNil(model.reviewedRegion)
+        model.nudgeOffset(dx: 20, dy: 0)
+        return model
+    }
+
+    private func candidateModel() throws -> AirTraceModel {
+        let model = try startedModel()
+        for index in 0..<24 { sendFrame(index) }
+        sendFrame(24, pinched: false)
+        XCTAssertEqual(model.flow?.state, .candidateReady)
+        return model
+    }
+
+    private func sendFrame(_ index: Int, hasHand: Bool = true, hasRawIdentity: Bool = true, pinched: Bool = true) {
+        let time = ProcessInfo.processInfo.systemUptime
+        let identity = FrameIdentity(generation: 1, captureTimestamp: 7000 + Double(index) * 0.02, receivedAt: time)
+        let angle = 2 * Double.pi * Double(index % 24) / 24
+        let point = CGPoint(x: (120 + 30 * cos(angle)) / 300, y: (140 + 20 * sin(angle)) / 400)
+        let hand = HandObservation(identity: identity, indexTip: point,
+                                   thumbTip: CGPoint(x: point.x + (pinched ? 1 : 60) / 300, y: point.y),
+                                   indexConfidence: 0.9, thumbConfidence: 0.9)
+        events.send(.eyes(hasRawIdentity ? eyes(x: 0.5, y: 0.5) : nil, identity: identity, mode: .setupFront))
+        events.send(.hand(.success(hasHand ? hand : nil), identity: identity, mode: .setupFront))
+    }
+
+    private func approvedGaze() throws -> GazeSession {
+        var session = GazeSession()
+        session.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .setupFront, generation: 1)
+        session.startCalibration()
+        for target in 0..<9 {
+            let start = 10 + Double(target) * 2
+            let point = try XCTUnwrap(session.target).normalized
+            session.targetPresented(at: start)
+            for index in 0..<30 {
+                let time = start + 0.51 + Double(index) * 0.03
+                session.receive(try snapshot(x: point.x, y: point.y, time: time), now: time)
+            }
+            session.tick(now: start + 1.5)
+        }
+        session.startEvaluation()
+        for window in 0..<10 {
+            let start = 30 + Double(window) * 2
+            let point = try XCTUnwrap(session.target).normalized
+            session.targetPresented(at: start)
+            for slot in 0..<20 {
+                let time = start + 0.525 + Double(slot) * 0.05
+                session.receive(try snapshot(x: point.x, y: point.y, time: time), now: time)
+                session.tick(now: time)
+            }
+            session.tick(now: start + 1.5)
+        }
+        session.recordEyeOnly(.observedPass)
+        XCTAssertTrue(session.report?.passesCompleteGate == true)
+        return session
+    }
+
+    private func eyes(x: Double, y: Double) -> EyeObservation {
+        EyeObservation(lookAtPoint: SIMD3(Float(x), Float(y), 1), leftEyeTranslation: SIMD3(-0.03, 0, 0),
+                       rightEyeTranslation: SIMD3(0.03, 0, 0), leftBlink: 0, rightBlink: 0, isTracked: true)
+    }
+
+    private func snapshot(x: Double, y: Double, time: Double) throws -> CaptureSnapshot {
+        var image: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &image), kCVReturnSuccess)
+        let identity = FrameIdentity(generation: 1, captureTimestamp: 5000 + time, receivedAt: time)
+        let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 400), displayTransform: .identity, orientation: .right, mirrored: true))
+        let packet = RenderPacket(identity: identity, image: try XCTUnwrap(image), geometry: geometry, mode: .setupFront)
+        let observation = eyes(x: x, y: y)
+        return CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .ready, support: nil,
+                               renderPacket: packet, eyes: observation, eyeIdentity: identity, hand: nil,
+                               handMessage: "fixture", rawEyes: observation, rawEyeIdentity: identity)
     }
 }
