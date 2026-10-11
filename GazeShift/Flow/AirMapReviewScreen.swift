@@ -95,6 +95,9 @@ final class AirTraceModel: ObservableObject {
     func prepareForRearSelection() {
         guard let region = reviewedRegion, let gaze = currentGaze?(), isEligible(gaze),
               gaze.geometry == region.displayGeometry else { interrupt(); return }
+        // Approval can be revoked after acceptance while the demo keeps front eligibility alive.
+        // Carry that current dependency into rear mode before its new calibration clears the report.
+        regionRequiresUnvalidatedGaze = regionRequiresUnvalidatedGaze || gaze.report?.passesCompleteGate != true
         flow = nil
         pendingRearReset = true
     }

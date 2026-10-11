@@ -16,7 +16,7 @@ struct GazeRunProgress: View {
                 .accessibilityIdentifier("gazeProgress")
             Text("Look at the WHITE CIRCLE")
                 .font(.title2.weight(.semibold))
-            Text("Keep head and distance still. Gaze feedback is hidden during measurement.")
+            Text("Keep looking until the target moves; keep head and distance still. Gaze feedback is hidden during measurement.")
                 .font(.subheadline).foregroundStyle(ScreenStyle.secondary)
         }
         .foregroundStyle(.white)

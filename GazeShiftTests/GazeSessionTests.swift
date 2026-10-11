@@ -501,6 +501,35 @@ final class AirTraceModelTests: XCTestCase {
         XCTAssertNil(gaze.calibration, "The demo still requires a fresh rear fit")
     }
 
+    func testFrontApprovalRevokedDuringDemoClearsPendingAndRetainedRearRegionsOnDemoOff() throws {
+        for rearStarted in [false, true] {
+            let model = try candidateModel()
+            XCTAssertTrue(gaze.report?.passesCompleteGate == true)
+            model.allowUnvalidatedGaze = true
+            model.accept()
+            model.nudgeOffset(dx: 20, dy: 0)
+            XCTAssertNotNil(model.reviewedRegion)
+            gaze.recordEyeOnly(.observedFail)
+            XCTAssertFalse(gaze.report?.passesCompleteGate == true)
+            model.end()
+            model.prepareForRearSelection()
+            gaze.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear, generation: 2)
+            if rearStarted {
+                events.send(.reset(generation: 2, mode: .liveRear))
+                model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+            }
+
+            model.allowUnvalidatedGaze = false
+
+            XCTAssertNil(model.reviewedRegion)
+            XCTAssertNil(model.patchOffset)
+            XCTAssertNil(model.rearRegion(for: gaze.geometry))
+            events.send(.reset(generation: 2, mode: .liveRear))
+            model.tick(now: ProcessInfo.processInfo.systemUptime, geometry: gaze.geometry)
+            XCTAssertNil(model.rearRegion(for: gaze.geometry))
+        }
+    }
+
     func testValidatedFrontRegionSurvivesLeavingDemoAfterRearHandoff() throws {
         for enableBeforeAccept in [false, true] {
             let model = try candidateModel()
