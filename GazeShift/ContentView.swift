@@ -33,6 +33,10 @@ struct ContentView: View {
     /// Team-approved demo override: use the provisional (failed or untested) calibration for the air map
     /// and simulation, with a persistent warning. Off by default; never counts as validated evidence.
     @State private var unvalidatedDemo = false
+    /// Backup demo: the accepted traced region, saved in normalized viewport units at Accept time,
+    /// blurred at a FIXED position with no eye tracking. Independent of later gaze/air-map state.
+    @State private var fixedRegion: (center: CGPoint, radii: CGSize)?
+    @State private var fixedBlur = false
     @State private var viewportFrame: CGRect = .zero
     @State private var showReferences = true
     @State private var now = ProcessInfo.processInfo.systemUptime
@@ -72,6 +76,7 @@ struct ContentView: View {
                             GazeCalibrationControls(session: $gaze, showReferences: $showReferences, captureReady: snapshot.status == .ready)
                                 .id(ScreenStyle.gazeControlsAnchor)
                             Divider()
+                            fixedBlurControls
                             unvalidatedDemoToggle
                             blurChecklist
                             AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
@@ -100,6 +105,12 @@ struct ContentView: View {
         // Demo: jump straight to the blur once a region is accepted, so nothing is hidden behind toggles.
         .onChange(of: airTrace.reviewedRegion != nil) { _, accepted in
             if accepted, unvalidatedDemo { viewMode = .comparison(.simulatedBlur) }
+            if accepted, let region = airTrace.reviewedRegion {
+                let fixation = region.provenance.normalizedFixation
+                fixedRegion = (CGPoint(x: fixation.x + region.normalizedOffset.x, y: fixation.y + region.normalizedOffset.y),
+                               CGSize(width: region.normalizedRadii.x, height: region.normalizedRadii.y))
+                fixedBlur = true
+            }
         }
         .onChange(of: snapshot.sequence) { _, _ in acceptCapture() }
         .onChange(of: scenePhase) { _, phase in if phase == .background { stop() } }
@@ -150,7 +161,12 @@ struct ContentView: View {
                         .position(x: hand.thumbTip.x * geometry.size.width, y: hand.thumbTip.y * geometry.size.height)
                 }
                 if let measured = gaze.geometry { AirMapOverlay(model: airTrace, geometry: measured) }
-                if let composition, compositeFailure == nil { compositionOutline(composition.plan) }
+                if let fixed = fixedBlurEllipse {
+                    Ellipse().stroke(Color.green, lineWidth: 3)
+                        .frame(width: 2 * fixed.radii.width, height: 2 * fixed.radii.height)
+                        .position(fixed.center)
+                        .accessibilityIdentifier("fixedBlurOutline")
+                } else if let composition, compositeFailure == nil { compositionOutline(composition.plan) }
                 if unvalidatedDemo {
                     VStack {
                         Text(Self.unvalidatedBanner)
@@ -284,6 +300,13 @@ struct ContentView: View {
 
     /// GPU layers only when something adaptive is drawn and the simulation shader loaded.
     private var compositeUniforms: CompositeUniformValues.GPU? {
+        if compositeFailure == nil, let fixed = fixedBlurEllipse, viewportFrame.width > 0, viewportFrame.height > 0 {
+            let w = viewportFrame.width, h = viewportFrame.height
+            return CompositeUniformValues.fixedBlur(
+                center: SIMD2(Float(fixed.center.x / w), Float(fixed.center.y / h)),
+                radii: SIMD2(Float(fixed.radii.width / w), Float(fixed.radii.height / h)),
+                kernel: SIMD2(Float(Self.fixedBlurKernelPoints / w), Float(Self.fixedBlurKernelPoints / h)))
+        }
         guard compositeFailure == nil, let composition, !composition.plan.isOriginalOnly else { return nil }
         return CompositeUniformValues(plan: composition.plan, geometry: composition.geometry).gpu
     }
@@ -355,6 +378,32 @@ struct ContentView: View {
         switch viewMode {
         case .live: "Live (no blur — turn on Demo comparison)"
         case let .comparison(mode): mode.title
+        }
+    }
+
+    static let fixedBlurKernelPoints: CGFloat = 22
+
+    /// The fixed backup ellipse in current viewport points (same viewport in Front and Rear).
+    private var fixedBlurEllipse: (center: CGPoint, radii: CGSize)? {
+        guard fixedBlur, let fixedRegion, viewportFrame.width > 0, viewportFrame.height > 0 else { return nil }
+        let w = viewportFrame.width, h = viewportFrame.height
+        return (CGPoint(x: fixedRegion.center.x * w, y: fixedRegion.center.y * h),
+                CGSize(width: fixedRegion.radii.width * w, height: fixedRegion.radii.height * h))
+    }
+
+    @ViewBuilder private var fixedBlurControls: some View {
+        if fixedRegion != nil {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Fixed blur — no eye tracking", isOn: $fixedBlur).accessibilityIdentifier("fixedBlurToggle")
+                Text(fixedBlur
+                     ? "Blurs the traced region where you drew it. Eye tracking is not used. \(CompositionPlan.simulationLabelText)"
+                     : "Off: blur follows eye tracking (needs calibration).")
+                    .font(.caption).foregroundStyle(fixedBlur ? Color.orange : Color.secondary)
+                if fixedBlur {
+                    Text(CompositionPlan.simulationContextText).font(.caption2).foregroundStyle(.secondary)
+                }
+                if compositeFailure != nil { Text("Blur shader unavailable").font(.caption).foregroundStyle(.red) }
+            }
         }
     }
 

@@ -130,6 +130,12 @@ public struct CompositeUniformValues: Equatable, Sendable {
         public var blurEnabled: UInt32
     }
 
+    /// Backup demo: a blur fixed at a normalized display-UV ellipse, with no gaze and no copy.
+    public static func fixedBlur(center: SIMD2<Float>, radii: SIMD2<Float>, kernel: SIMD2<Float>) -> GPU {
+        GPU(sourceOrigin: .zero, destinationOrigin: .zero, copySize: .zero, blurCenter: center, blurRadii: radii,
+            blurKernel: kernel, copyEnabled: 0, blurEnabled: 1)
+    }
+
     public var gpu: GPU {
         GPU(sourceOrigin: sourceOrigin, destinationOrigin: destinationOrigin, copySize: copySize,
             blurCenter: blurCenter, blurRadii: blurRadii, blurKernel: blurKernel,
