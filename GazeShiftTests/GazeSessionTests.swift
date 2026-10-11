@@ -67,6 +67,31 @@ final class GazeSessionTests: XCTestCase {
         }
     }
 
+    // Break caught: raw tracking stays ready off-screen, so it cannot authorize immediate calibrated recovery.
+    func testOffscreenLossRequiresThreeDistinctInViewPredictionsBeforeRecovery() throws {
+        var session = try calibrated()
+        for index in 0..<3 {
+            let time = 30 + Double(index) * 0.02
+            session.receive(try snapshot(x: 0.25, y: 0.75, host: time), now: time)
+        }
+        XCTAssertNotNil(session.marker(at: 30.04))
+        session.receive(try snapshot(x: -0.2, y: 0.75, host: 30.05), now: 30.05)
+        XCTAssertEqual(session.displayState(at: 30.05), .outsideView)
+        XCTAssertNil(session.marker(at: 30.05))
+
+        session.receive(try snapshot(x: 0.25, y: 0.75, host: 30.06), now: 30.06)
+        XCTAssertEqual(session.displayState(at: 30.06), .recovering(1))
+        XCTAssertNil(session.marker(at: 30.06))
+        session.receive(try snapshot(x: 0.25, y: 0.75, host: 30.06), now: 30.065)
+        XCTAssertEqual(session.displayState(at: 30.065), .recovering(1))
+        session.receive(try snapshot(x: 0.25, y: 0.75, host: 30.07), now: 30.07)
+        XCTAssertEqual(session.displayState(at: 30.07), .recovering(2))
+        XCTAssertNil(session.marker(at: 30.07))
+        session.receive(try snapshot(x: 0.25, y: 0.75, host: 30.08), now: 30.08)
+        XCTAssertEqual(session.displayState(at: 30.08), .active)
+        XCTAssertNotNil(session.marker(at: 30.08))
+    }
+
     func testMovingViewportWithoutResizingStillInvalidatesPhysicalScreenFit() throws {
         var session = try calibrated()
         session.configure(size: CGSize(width: 300, height: 400), scale: 3, mode: .liveRear,

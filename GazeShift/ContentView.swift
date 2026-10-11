@@ -126,7 +126,7 @@ struct ContentView: View {
                     Circle().stroke(.yellow, lineWidth: 2).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
                         .position(x: hand.thumbTip.x * geometry.size.width, y: hand.thumbTip.y * geometry.size.height)
                 }
-                AirMapOverlay(model: airTrace)
+                if let measured = gaze.geometry { AirMapOverlay(model: airTrace, geometry: measured) }
                 if showReferences, gaze.calibration != nil, !gaze.isRunning {
                     ForEach(HeldOutTarget.allCases, id: \.rawValue) { reference in
                         RoundedRectangle(cornerRadius: 3).stroke(.white, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))

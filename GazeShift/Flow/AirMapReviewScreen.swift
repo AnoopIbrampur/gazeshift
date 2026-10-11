@@ -56,8 +56,32 @@ final class AirTraceModel: ObservableObject {
         let before = current.state
         // Layout, generation or calibration-setup change: an unaccepted stroke must be redone.
         if geometry != current.geometry, before != .accepted { current.interrupt() }
-        current.expireStaleHand(now: now)
+        current.expireInputs(now: now, geometry: geometry ?? current.geometry)
         if current.state != before { flow = current }
+    }
+
+    /// Ordered capture-event path (preferred by the reviewed integration guide): every source frame.
+    func ingestEyes(_ eyes: EyeObservation?, identity: FrameIdentity, calibration: GazeCalibration?) {
+        guard var current = flow else { return }
+        current.recordGaze(frame: FlowAdapters.frameKey(identity),
+                           observation: FlowAdapters.gazeObservation(eyes, identity: identity),
+                           calibration: calibration, now: ProcessInfo.processInfo.systemUptime)
+        flow = current
+    }
+
+    /// Ordered capture-event path: every Vision completion, including nil/error results.
+    func ingestHand(_ hand: HandObservation?, identity: FrameIdentity, geometry: RenderGeometry) {
+        guard var current = flow else { return }
+        current.handResult(hand.map(FlowAdapters.handInput), frame: FlowAdapters.frameKey(identity),
+                           now: ProcessInfo.processInfo.systemUptime, geometry: geometry)
+        flow = current
+    }
+
+    /// Host watchdog hook; also called from `tick`.
+    func expireInputs(now: Double, geometry: RenderGeometry) {
+        guard var current = flow else { return }
+        current.expireInputs(now: now, geometry: geometry)
+        flow = current
     }
 
     func accept() {
@@ -109,40 +133,50 @@ final class AirTraceModel: ObservableObject {
     }
 }
 
-/// Drawn inside the measured viewport (same coordinate space as `GazeSession` geometry).
+/// Render only over the SAME measured preview used by capture and calibration.
+/// The caller supplies its current full geometry; a stale trace is never scaled into a new viewport.
 struct AirMapOverlay: View {
     @ObservedObject var model: AirTraceModel
+    let geometry: RenderGeometry
 
     var body: some View {
-        if let flow = model.flow {
-            let fixation = FlowAdapters.cgPoint(flow.session.fixation)
-            ZStack {
-                Path { path in
-                    guard let first = flow.rawTrace.first else { return }
-                    path.move(to: FlowAdapters.cgPoint(first))
-                    for point in flow.rawTrace.dropFirst() { path.addLine(to: FlowAdapters.cgPoint(point)) }
-                }
-                .stroke(Color.yellow, lineWidth: 1.5)
-                if let ellipse = flow.candidateEllipse {
-                    let box = CGRect(x: ellipse.center.x - ellipse.radii.x, y: ellipse.center.y - ellipse.radii.y,
-                                     width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y)
-                    Path(ellipseIn: box).stroke(Color.cyan, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                    if let offset = model.patchOffset {
-                        Path(box.offsetBy(dx: offset.x, dy: offset.y))
-                            .stroke(Color.green, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
-                    }
-                }
-                Path { path in
-                    path.move(to: CGPoint(x: fixation.x - 12, y: fixation.y)); path.addLine(to: CGPoint(x: fixation.x + 12, y: fixation.y))
-                    path.move(to: CGPoint(x: fixation.x, y: fixation.y - 12)); path.addLine(to: CGPoint(x: fixation.x, y: fixation.y + 12))
-                }
-                .stroke(Color.white, lineWidth: 2.5)
+        ZStack(alignment: .topLeading) {
+            if let flow = model.flow, flow.geometry == geometry { overlay(flow) }
+        }
+        .frame(width: CGFloat(geometry.width), height: CGFloat(geometry.height), alignment: .topLeading)
+        .clipped()
+        .allowsHitTesting(false)
+        .accessibilityIdentifier("airMapOverlay")
+    }
+
+    private func overlay(_ flow: AirTraceFlow) -> some View {
+        let fixation = FlowAdapters.cgPoint(flow.session.fixation)
+        return ZStack {
+            Path { path in
+                guard let first = flow.rawTrace.first else { return }
+                path.move(to: FlowAdapters.cgPoint(first))
+                for point in flow.rawTrace.dropFirst() { path.addLine(to: FlowAdapters.cgPoint(point)) }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityIdentifier("airMapOverlay")
+            .stroke(Color.yellow, lineWidth: 1.5)
+            if let ellipse = flow.candidateEllipse {
+                Path(ellipseIn: CGRect(x: ellipse.center.x - ellipse.radii.x, y: ellipse.center.y - ellipse.radii.y,
+                                       width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y))
+                    .stroke(Color.cyan, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                if let offset = model.patchOffset {
+                    Path(CGRect(x: ellipse.center.x - ellipse.radii.x + offset.x, y: ellipse.center.y - ellipse.radii.y + offset.y,
+                                width: 2 * ellipse.radii.x, height: 2 * ellipse.radii.y))
+                        .stroke(Color.green, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                }
+            }
+            Path { path in
+                path.move(to: CGPoint(x: fixation.x - 10, y: fixation.y)); path.addLine(to: CGPoint(x: fixation.x + 10, y: fixation.y))
+                path.move(to: CGPoint(x: fixation.x, y: fixation.y - 10)); path.addLine(to: CGPoint(x: fixation.x, y: fixation.y + 10))
+            }
+            .stroke(Color.white, lineWidth: 2)
         }
     }
 }
+
 
 /// ANO-8 controls: explicit Accept/Redo and copy-offset nudges. Touch never draws the region.
 struct AirMapControls: View {

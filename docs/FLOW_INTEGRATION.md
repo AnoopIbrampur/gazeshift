@@ -1,40 +1,40 @@
-# Flow integration (ANO-8, ANO-10, ANO-11, ANO-20)
+# Flow integration (ANO-8, ANO-10, ANO-11, ANO-15, ANO-20)
 
-Branch `anoop/flow-and-ui`. Written on a Mac without Xcode, so **nothing here has been built for iOS or run on a device**.
-
-## Status
-
-- **Air map (ANO-20, ANO-8) is wired into the app.** `GazeShiftFlow` and `GazeShift/Flow/*.swift` are in the Xcode project. `ContentView` has an **AIR MAP** section and a viewport overlay. It needs an iOS build and a phone test.
-- **Comparison and copy (ANO-10, ANO-11) are logic only.** The planner, the controls and `CompositeShaders.metal` exist, but the renderer isn't switched over yet. `CompositeShaders.metal` is in the project navigator but **in no build phase**.
-- **Calibration:** Hussain's merged `GazeSession` / `GazeCalibrationControls` handle it. The earlier duplicate `CalibrationRun` / `CalibrationScreen` from this branch has been removed.
+Prepared on `anoop/flow-and-ui`; review fixes are on `feat-flow-integration`. These components are **not wired into the running app**. Physical air tracing, live gaze-driven composition and the compositor on the iPhone GPU remain **NOT TESTED**.
 
 ## What was verified
 
-- `GazeShiftFlow`: **18 Swift Testing tests pass** with `swift test` using the Command Line Tools. They use **synthetic fixtures only** and prove flow logic, not real air tracing or live eyes.
-- Earlier, two deliberately injected bugs were caught by the tests, then reverted.
-- `ContentView`, `GazeSession`, `GazeCalibrationControls` and `GazeShift/Flow/*.swift` type-check against the **macOS** SDK. That run used stand-ins for the iOS-only `CameraView` / `CaptureModel` and swapped `.topBarTrailing` → `.automatic`, in scratch copies only. They have not been compiled against the iOS SDK.
-- `project.pbxproj` passes `plutil -lint`. The new IDs (`F000…01`–`0B`) each have one definition and the expected uses.
-- `CompositeShaders.metal` has **not been compiled.**
-- One change to the core: `Calibration.swift` gets explicit `[Double]` types, because the Swift 6.2 CLI couldn't type-check that expression. Values and order are unchanged.
+Baseline at PR2 head `fdb609f`, before review fixes:
 
-## How the air map runs
+- Full Xcode checks passed: 24 Flow fixture tests and 31 Core tests. These prove software logic, not device calibration, air tracing or live-eye behavior.
+- Core and Flow cross-built for arm64 iOS; the Flow SwiftUI files compiled to an iOS object/module against the iPhoneOS 27 SDK.
+- The original app built for unsigned iOS, but that target did not include the Flow screens, package or compositor.
+- `CompositeShaders.metal` compiled into a runtime library and render pipeline on the Mac's Apple M4 GPU. Offline iOS Metal compilation was blocked by the missing optional Metal Toolchain. Neither result proves iPhone GPU behavior.
 
-1. Front setup → Hussain's calibration → held-out test → eye-only check. **AIR MAP → Start** is enabled only when `gaze.report?.passesCompleteGate == true` (ANO-19).
-2. `AirTraceModel` subscribes to `capture.$snapshot`, so view updates can't coalesce snapshots away. For each new frame it records `rawEyes` / `rawEyeIdentity` through `gaze.calibration`. For each new `snapshot.hand` it pairs the hand with the gaze **from the same frame** (generation + ARKit frame timestamp) and feeds the core `AirTraceSession`.
-3. A white `+` at the viewport center is the stationary fixation reference. You pinch, trace, return to the start and release.
-   - **Clears the whole stroke:** a stale or missing hand (no new hand result for 250 ms, because the snapshot carries only detected hands), missing same-frame gaze, a blink, drift beyond 0.10 of the diagonal, a generation change, a mode change, Stop/Retry or a geometry change.
-4. Review shows the raw trace (yellow) and the min/max ellipse (cyan), with explicit Accept/Redo and copy-offset nudges (green preview box). There's no default offset.
+Re-run affected checks on the final review-fix commit. Keep physical gates separate from these baseline checks.
 
-## Open issue for Hussain: region carry-over to rear mode
+One change to Hussain's core: `GazeShiftCore/Sources/GazeShiftCore/Calibration.swift` gets explicit `[Double]` types on the design/target concatenation. Swift 6.2 (Command Line Tools) failed with "unable to type-check this expression in reasonable time". The values and order are unchanged.
 
-`GazeSession.configure` sets `viewingSetupID = "capture-generation-<n>-origin-<x>-<y>"`. Switching to Rear + eyes advances the generation, so the setup ID changes. Core `ReviewedRegion.retainedForModeTransition(to:)` requires the same `viewingSetupID`, so an accepted front region will be rejected with `invalidModeTransition` in rear mode. **Proposed fix:** keep the generation out of `viewingSetupID` and invalidate the calibration on a generation change separately. This is Hussain's file, so it hasn't been changed here. ANO-10/11 live relocation needs this.
+## What's in it
 
-## Remaining wiring for ANO-10/11 (after the carry-over fix)
+| Ticket | Piece | Where |
+|---|---|---|
+| ANO-20 | `AirTracePairer`/`AirTraceFlow`: pairs each Vision result with gaze **from the same ARFrame**. Every source eye event independently validates the active stroke, including frames skipped by Vision. A watchdog expires source and hand streams; any loss clears the whole stroke until Redo. | `GazeShiftFlow/Sources/GazeShiftFlow/AirTraceFlow.swift` |
+| ANO-15 | Retain the reviewed P2 `GazeSession` as the **sole active calibrator**: nine targets, ≥15 distinct valid training samples per target, insufficient-target retry, separate held-out protocol and explicit eye-only report. `CalibrationRun`/`CalibrationController` remain unused alternatives; do not wire them as a second owner. | `GazeShift/GazeSession.swift`, `GazeShift/GazeCalibrationControls.swift` |
+| ANO-8 | `AirMapOverlay` renders raw trace, min/max ellipse and fixation `+` in the full measured preview. Separate `AirMapReviewControls` provide Accept / Redo and explicit copy-offset nudges outside that viewport. | `GazeShift/Flow/AirMapReviewScreen.swift` |
+| ANO-10/11 | `CompositionPlanner`: Live = copy only; Original = nothing; Simulated blur = mask at gaze + region offset; Blur + copy = same ellipse for mask and copy. Lost gaze or rejected placement → original + status. The Metal compositor samples original pixels for the copy and applies the blur last. | `GazeShiftFlow/.../Composition.swift`, `GazeShift/Flow/ComparisonControls.swift`, `GazeShift/Flow/CompositeShaders.metal` |
 
-1. Add `CompositeShaders.metal` to Copy Bundle Resources **as text**. Load it with a second `device.makeLibrary(source:)` and build a pipeline with `compositeVertex` / `compositeFragment`. Keep the existing pipeline as a fallback until it's verified on the phone.
-2. Per frame:
+## Integration steps (Hussain / integrator, in Xcode)
+
+1. **Packages:** File → Add Package Dependencies → Add Local… → `GazeShiftFlow`. Link the `GazeShiftFlow` and `GazeShiftCore` libraries to the `GazeShift` target.
+2. **Sources:** add `FlowAdapters.swift`, `AirMapReviewScreen.swift` and `ComparisonControls.swift` to the target. Keep `GazeSession`/`GazeCalibrationControls` as the calibration owner; do not add `CalibrationScreen.swift` to the active flow.
+3. **Shader:** add `GazeShift/Flow/CompositeShaders.metal` to Copy Bundle Resources **as text**, the same way as `CameraShaders.metal`, not as a compiled source. Load it with a second `device.makeLibrary(source:)` and build a separate pipeline with `compositeVertex` and `compositeFragment`. Keep the existing pipeline as a fallback until it's verified on the phone.
+4. **Measured viewport:** put `AirMapOverlay(model: airTrace, geometry: measuredGeometry)` in the existing camera preview's `ZStack`. Supply the exact current full preview geometry used by capture and gaze calibration. Put `AirMapReviewControls(model: airTrace)` outside that viewport. The overlay has no controls or second `GeometryReader`; it renders nothing for a geometry mismatch. Preserve preview size **and origin** across phase/control changes. Do not scale old trace coordinates into a smaller panel.
+5. **Renderer inputs:** compute the plan each frame, using only a passed **rear-mode** report and the calibrated marker:
    ```swift
-   let plan = CompositionPlanner.plan(mode: viewMode, region: rearRegion, gaze: gaze.marker(at: now), geometry: rearGeometry,
+   let sceneHealthy = snapshot.renderPacket?.identity.isFresh(at: now) == true
+   let liveGaze = sceneHealthy && gaze.report?.passesCompleteGate == true ? gaze.marker(at: now) : nil
+   let plan = CompositionPlanner.plan(mode: viewMode, region: rearRegion, gaze: liveGaze, geometry: rearGeometry,
                                       userOffset: airTrace.patchOffset ?? .init(x: .nan, y: .nan),
                                       liveMargin: LivePlacementMargin(p90ErrorPoints: rearReport.overallErrors?.p90Points ?? .nan,
                                                                      geometry: rearGeometry, validated: rearReport.passesCompleteGate),
@@ -42,10 +42,16 @@ Branch `anoop/flow-and-ui`. Written on a Mac without Xcode, so **nothing here ha
    var gpu = CompositeUniformValues(plan: plan, geometry: rearGeometry).gpu
    encoder.setFragmentBytes(&gpu, length: MemoryLayout<CompositeUniformValues.GPU>.stride, index: 1)
    ```
-   - `gaze.marker(at:)` is already nil unless gaze is valid, recovered (3 samples) and on-screen.
-   - A NaN offset is rejected as `invalidOffset`, so the original is shown until the user chooses an offset.
-   - Full-viewport sampling bounds are valid only while the ARKit transform is aspect-fill.
-3. Add `ComparisonControls(mode:plan:)` below the viewport in rear mode.
+   Raw `CaptureFreshness.trackingAvailable` is insufficient: it does not reject calibrated off-screen predictions. `GazeSession.marker(at:)` requires three **distinct, increasing, fresh** source observations with valid calibrated predictions inside the measured viewport. Off-screen, blinking, missing or invalid gaze clears the marker and adaptive layers; the first and second valid predictions do not recover them. Scene freshness is independent: a stalled source clears the scene/effects and shows “Scene unavailable” or “Paused”, never a frozen image labeled live. A healthy scene with unavailable gaze stays original with the tracking warning. A NaN offset is deliberately rejected until the user chooses one. Full-viewport `cameraSamplingBounds` is valid only when the ARKit aspect-fill mapping covers that viewport; otherwise derive valid sampling bounds from the camera extent.
+6. **Air-trace feed** (future ordered capture events, not snapshot “latest eyes”):
+   - For **every** front source frame, emit its exact raw eyes—including nil, blinking or untracked eyes—before its Vision completion can be delivered: `airTrace.ingestEyes(eyes, identity: frameIdentity, calibration: frontCalibration)`. A bad eye-only event immediately invalidates an active stroke even when Vision drops that frame.
+   - For each Vision completion, call `airTrace.ingestHand(observationOrNil, identity: item.identity, geometry: frontGeometry)`, including nil/error results. Forward a rejected stale completion as loss with its original identity; never retimestamp it. Hand and gaze pair by generation plus ARKit timestamp, never with a newer snapshot's eyes.
+   - From the host watchdog, call `airTrace.expireInputs(now: now, geometry: frontGeometry)` every `CaptureLimits.watchdogInterval` (currently 50 ms), even while callbacks have stopped. Source and hand age use original monotonic capture times and the provisional 250 ms limit. Fresh camera/eye events do not conceal missing hand results. Event callbacks also check expiry before accepting new data.
+   - Call `airTrace.interrupt()` on mode switch, pause, layout change or a new generation.
+7. **Calibration feed and gates:** continue `GazeSession.receive(snapshot, now:)` with its raw-eye rejection metadata, target-presentation timing and periodic `tick(now:)`. Do not rebuild observations from filtered `snapshot.eyes`, which loses rejection reasons. Pass the front complete gate before actual air mapping, explicitly accept the region, switch the same session, then fit and pass all rear held-out/eye-only checks before composition. The provisional marker remains available for the eye-only check; provisional calibration alone cannot authorize mapping or composition.
+8. **Mode-transition contract still needs integration:** current `GazeSession` geometry includes capture generation in `viewingSetupID`. A rear reconfiguration changes generation, so blindly passing its new geometry to `ReviewedRegion.retainedForModeTransition(to:)` correctly rejects retention. Implement and review an explicit same-physical-display transition adapter before wiring this step; do not falsify geometry equality or reuse the front calibration. Real geometry, distance, stand or lighting changes invalidate both calibration and region and require setup again.
+
+Phase gate: passed front report → actual air trace and explicit review → permitted same-session transition → fresh rear fit and complete report → explicit offset → composition. Until physical P2 passes, these are preparation interfaces, not enabled P3/P4 behavior.
 
 ## Run the flow tests (no Xcode needed)
 
@@ -54,4 +60,11 @@ cd GazeShiftFlow
 F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks
 swift test -Xswiftc -F -Xswiftc $F -Xlinker -rpath -Xlinker $F
 ```
-With Xcode installed, a plain `swift test` works.
+With Xcode installed, a plain `swift test` (or ⌘U on the package) works.
+
+## Current wiring on `anoop/flow-and-ui` (interim)
+
+- `ContentView` already hosts the air map: `AirMapOverlay(model:geometry:)` inside the measured preview (only when `gaze.geometry` exists), `AirMapControls` (Start gated on Front + `.ready` + `gaze.report?.passesCompleteGate`, Redo/Accept/Close, offset nudges) below it, `airTrace.tick(now:geometry:)` on the existing timer (calls `expireInputs`), and `interrupt()` on Front/Rear/Stop/Retry.
+- **Interim feed:** `AirTraceModel.attach(snapshots: capture.$snapshot)` records each new `rawEyeIdentity` frame and each new `snapshot.hand`. This is NOT the ordered capture-event feed in step 6. Snapshots can skip a frame's eyes, and empty Vision results are not delivered, so loss is caught by `expireInputs` rather than immediately. `ingestEyes`/`ingestHand`/`expireInputs` exist on the model for the step-6 wiring from `CaptureController`. Once that's in place, drop `attach`.
+- Duplicate `CalibrationRun`/`CalibrationScreen` are removed from this branch; `GazeSession` is the only calibrator.
+- Not built for iOS on this branch since the merge; the Flow logic tests pass (24/24, fixtures only).
