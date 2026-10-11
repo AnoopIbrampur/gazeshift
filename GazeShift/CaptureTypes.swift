@@ -113,6 +113,10 @@ struct CaptureSnapshot {
     let eyeIdentity: FrameIdentity?
     let hand: HandObservation?
     let handMessage: String
+    /// Evaluation-only metadata; never used directly as a rendered gaze point.
+    /// Retain invalid eyes so held-out rejection reasons remain truthful.
+    var rawEyes: EyeObservation? = nil
+    var rawEyeIdentity: FrameIdentity? = nil
     /// Main-thread delivery can be delayed after capture validated a frame.
     /// Recheck every observation before an immutable update reaches the display.
     func forDisplay(at now: TimeInterval) -> CaptureSnapshot {
@@ -122,7 +126,8 @@ struct CaptureSnapshot {
         let safeHand = safePacket == nil ? nil : hand.flatMap { $0.identity.generation == generation && $0.identity.isFresh(at: now) ? $0 : nil }
         let safeStatus: CaptureStatus = staleScene ? .sceneUnavailable : (safePacket != nil && !validEyes ? .trackingUnavailable : status)
         let safeHandMessage = staleScene ? "Hand unavailable — stale source" : (hand != nil && safeHand == nil ? "Hand unavailable — stale result" : handMessage)
-        return CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: safeStatus, support: support, renderPacket: safePacket, eyes: validEyes ? eyes : nil, eyeIdentity: validEyes ? eyeIdentity : nil, hand: safeHand, handMessage: safeHandMessage)
+        let safeRawIdentity = rawEyeIdentity.flatMap { safePacket != nil && $0.generation == generation && $0.isFresh(at: now) ? $0 : nil }
+        return CaptureSnapshot(sequence: sequence, generation: generation, mode: mode, status: safeStatus, support: support, renderPacket: safePacket, eyes: validEyes ? eyes : nil, eyeIdentity: validEyes ? eyeIdentity : nil, hand: safeHand, handMessage: safeHandMessage, rawEyes: safeRawIdentity == nil ? nil : rawEyes, rawEyeIdentity: safeRawIdentity)
     }
     static let simulator = CaptureSnapshot(sequence: 0, generation: 0, mode: .setupFront, status: .simulator, support: nil, renderPacket: nil, eyes: nil, eyeIdentity: nil, hand: nil, handMessage: "Hand tracking unavailable")
 }

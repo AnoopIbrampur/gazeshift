@@ -155,6 +155,24 @@ final class CapturePipelineTests: XCTestCase {
         XCTAssertNil(delayed.eyeIdentity)
         XCTAssertNil(delayed.hand)
     }
+    func testRawInvalidEyeMetadataSurvivesOnlyForFreshEvaluation() throws {
+        var image: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &image), kCVReturnSuccess)
+        let geometry = try XCTUnwrap(DisplayGeometry(viewport: CGSize(width: 300, height: 500), displayTransform: .identity, orientation: .up, mirrored: false))
+        let id = identity(1)
+        let packet = RenderPacket(identity: id, image: try XCTUnwrap(image), geometry: geometry, mode: .setupFront)
+        let raw = eyes(tracked: false)
+        let snapshot = CaptureSnapshot(sequence: 1, generation: 1, mode: .setupFront, status: .trackingUnavailable,
+                                       support: nil, renderPacket: packet, eyes: nil, eyeIdentity: nil, hand: nil,
+                                       handMessage: "Hand unavailable", rawEyes: raw, rawEyeIdentity: id)
+        let fresh = snapshot.forDisplay(at: 10.1)
+        XCTAssertNil(fresh.eyes)
+        XCTAssertEqual(fresh.rawEyes?.isTracked, false)
+        XCTAssertEqual(fresh.rawEyeIdentity, id)
+        let stale = snapshot.forDisplay(at: 10.251)
+        XCTAssertNil(stale.rawEyes)
+        XCTAssertNil(stale.rawEyeIdentity)
+    }
     private func assertPoint(_ actual: CGPoint, _ expected: CGPoint, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(actual.x, expected.x, accuracy: 0.000001, file: file, line: line)
         XCTAssertEqual(actual.y, expected.y, accuracy: 0.000001, file: file, line: line)
