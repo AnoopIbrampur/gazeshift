@@ -198,7 +198,7 @@ final class AirTraceModel: ObservableObject {
 
 #endif
 
-/// Hand-only outline and deliberate same-display front→rear region handoff.
+/// Front-camera index tracing, rear screen-touch tracing, and deliberate same-display handoff.
 @MainActor
 final class AirTraceModel: ObservableObject {
     @Published private(set) var flow: AirTraceFlow?
@@ -219,13 +219,21 @@ final class AirTraceModel: ObservableObject {
     }
 
     func begin(geometry: RenderGeometry, generation: UInt64, now: Double = ProcessInfo.processInfo.systemUptime) {
-        guard geometry.mode == .frontSetup else { return }
         if let state = flow?.state, state == .armed || state == .tracing || state == .candidateReady { return }
         interrupt()
         regionGeneration = generation
-        guard let session = try? AirTraceSession(indexOnlyGeometry: geometry, captureGeneration: generation) else { return }
+        let session = geometry.mode == .rearLive
+            ? try? AirTraceSession(screenTouchGeometry: geometry, captureGeneration: generation)
+            : try? AirTraceSession(indexOnlyGeometry: geometry, captureGeneration: generation)
+        guard let session else { return }
         var current = AirTraceFlow(session: session)
         current.startDrawing(at: now, geometry: geometry)
+        flow = current
+    }
+
+    func touchPoint(_ point: ScreenPoint, now: Double = ProcessInfo.processInfo.systemUptime, geometry: RenderGeometry) {
+        guard var current = flow else { return }
+        current.touchPoint(point, now: now, geometry: geometry)
         flow = current
     }
 
@@ -313,6 +321,7 @@ final class AirTraceModel: ObservableObject {
                                  now: now, geometry: current.geometry)
             flow = current
         case let .hand(result, identity, mode):
+            guard flow?.geometry.mode == .frontSetup else { return }
             guard var current = currentFlow(identity: identity, mode: mode) else { return }
             current.indexResult((try? result.get()).map(FlowAdapters.indexInput), frame: FlowAdapters.frameKey(identity),
                                 captureTime: FlowAdapters.captureTime(identity), now: now, geometry: current.geometry)
@@ -322,7 +331,8 @@ final class AirTraceModel: ObservableObject {
 
     private func currentFlow(identity: FrameIdentity, mode: CaptureMode) -> AirTraceFlow? {
         guard let current = flow, identity.generation >= current.session.captureGeneration else { return nil }
-        guard identity.generation == current.session.captureGeneration, mode == .setupFront else { interrupt(); return nil }
+        let expectedMode: CaptureMode = current.geometry.mode == .rearLive ? .liveRear : .setupFront
+        guard identity.generation == current.session.captureGeneration, mode == expectedMode else { interrupt(); return nil }
         return current
     }
 }
@@ -371,11 +381,12 @@ struct AirMapOverlay: View {
 }
 
 
-/// ANO-8 controls: explicit Accept/Redo and copy-offset nudges. Touch never draws the region.
+/// Existing review controls and copy-offset nudges for both input methods.
 struct AirMapControls: View {
     @ObservedObject var model: AirTraceModel
     /// Why air mapping cannot start yet; nil when it can.
     let startBlocker: String?
+    var isRearScene = false
     let onStart: () -> Void
 
     var body: some View {
@@ -407,7 +418,9 @@ struct AirMapControls: View {
                     .accessibilityIdentifier("airMapStart")
                 if let startBlocker { Text(startBlocker).font(.caption).foregroundStyle(.secondary) }
                 if model.reviewedRegion != nil {
-                    Text("Accepted screen-fixed region. Switch to Rear scene to use it over live rear imagery.")
+                    Text(isRearScene
+                         ? "Accepted screen-fixed region over live rear imagery. Start drawing to replace it."
+                         : "Accepted screen-fixed region. Switch to Rear scene to use it over live rear imagery.")
                         .font(.caption)
                 }
             }
@@ -429,7 +442,17 @@ struct AirMapControls: View {
     }
 
     private func instruction(_ state: AirTraceState) -> String {
-        switch state {
+        if isRearScene {
+            return switch state {
+            case .ready: "Press Start drawing, then draw one closed loop directly on the rear camera image."
+            case .armed: "Drawing armed — touch the rear camera image to begin the yellow line."
+            case .tracing: "Draw a closed loop on the screen. Return to the yellow start dot, then lift your finger to review. Finish shape also freezes the outline."
+            case .candidateReady: "Shape frozen. Review the yellow trace and cyan ellipse, then Accept region or Draw again."
+            case .accepted: "Screen-fixed region accepted. Choose a copy offset over the live rear scene."
+            case let .invalid(reason): "Stroke cleared — \(Self.describe(reason)). Choose Draw again."
+            }
+        }
+        return switch state {
         case .ready: "Press Start drawing to record your index finger. Ordinary finger movement does not draw."
         case .armed: "Drawing armed — move your index finger in the camera view to begin the yellow line."
         case .tracing: "Draw a closed outline with your index finger. Return to the yellow start dot, then tap Finish shape with your other hand while keeping the index visible."
@@ -444,6 +467,7 @@ struct AirMapControls: View {
         case .fixationDrift: "eyes left the reference"
         case .invalidGaze: "eyes unavailable or blinking"
         case .invalidHand: "index finger not confidently tracked"
+        case .invalidTouch: "screen touch unavailable or outside the camera image"
         case .missingPair, .unpairedCapture: "hand or source frame missing"
         case .stalePair, .captureGap, .duplicateCapture, .invalidTimestamp: "tracking data too old or skipped"
         case .generationChanged, .interrupted, .geometryChanged, .invalidModeTransition: "capture restarted or layout changed"

@@ -9,6 +9,8 @@ public enum AirTraceDefaults {
     public static let fixationRadiusDiagonalFraction = 0.10
     public static let closureRadiusDiagonalFraction = 0.03
     public static let minimumDistinctSamples = 20
+    // Numerical degeneracy guard relative to the outline's bounds, not a measured vision threshold.
+    public static let minimumTouchAreaBoundingFraction = 1e-6
 }
 /// Both tips are already mapped to canonical full-viewport view points by the capture adapter.
 public struct AirTraceHandSample: Sendable {
@@ -48,7 +50,7 @@ public struct AirTraceGazeSample: Sendable {
 }
 public enum AirTraceRejection: String, Error, Equatable, Sendable {
     case invalidSetup, missingPair, unpairedCapture, stalePair, invalidTimestamp
-    case invalidHand, invalidGaze, fixationDrift, duplicateCapture, generationChanged
+    case invalidHand, invalidTouch, invalidGaze, fixationDrift, duplicateCapture, generationChanged
     case captureGap, interrupted, geometryChanged, insufficientSamples, degenerateStroke
     case openStroke, notReadyForReview, invalidModeTransition
 }
@@ -123,6 +125,7 @@ public struct AirTraceSession: Sendable {
     private var lastSourceGazeTimestamp: Double?
     private var handOnly = false
     private var indexOnly = false
+    private var screenTouch = false
     private var drawingStartedAt: Double?
 
     public init(geometry: RenderGeometry, fixation: ScreenPoint, eyeStateDescription: String, captureGeneration: UInt64) throws {
@@ -148,9 +151,20 @@ public struct AirTraceSession: Sendable {
         indexOnly = true
     }
 
+    /// Rear-screen touch points are direct UI input; the center is only a storage reference.
+    public init(screenTouchGeometry geometry: RenderGeometry, captureGeneration: UInt64) throws {
+        guard geometry.mode == .rearLive else { throw AirTraceRejection.invalidSetup }
+        self.geometry = geometry
+        fixation = ScreenPoint(x: geometry.width / 2, y: geometry.height / 2)
+        eyeStateDescription = "Eye tracking disabled · screen-fixed touch approximation"
+        self.captureGeneration = captureGeneration
+        handOnly = true
+        screenTouch = true
+    }
+
     /// Arming records no cached cursor points. Only captures at or after this explicit action qualify.
     public mutating func startDrawing(at now: Double, geometry currentGeometry: RenderGeometry) {
-        guard indexOnly, state == .ready else { return }
+        guard indexOnly || screenTouch, state == .ready else { return }
         guard currentGeometry == geometry else { invalidate(.geometryChanged); return }
         guard now.isFinite, now >= 0 else { invalidate(.invalidTimestamp); return }
         clearHistory()
@@ -193,17 +207,34 @@ public struct AirTraceSession: Sendable {
     }
 
     public mutating func finishDrawing(now: Double, geometry currentGeometry: RenderGeometry) {
-        guard indexOnly, state == .armed || state == .tracing else { return }
+        guard indexOnly || screenTouch, state == .armed || state == .tracing else { return }
         expireInputs(now: now, geometry: currentGeometry)
         guard state == .armed || state == .tracing else { return }
         finishCandidate()
+    }
+
+    /// Touch time is the host monotonic UI clock; it is not a camera or hand observation.
+    public mutating func consumeTouch(_ point: ScreenPoint, now: Double, geometry currentGeometry: RenderGeometry) {
+        guard screenTouch, state == .armed || state == .tracing else { return }
+        expireInputs(now: now, geometry: currentGeometry)
+        guard state == .armed || state == .tracing else { return }
+        guard now.isFinite, now >= 0, let drawingStartedAt, now >= drawingStartedAt else {
+            invalidate(.invalidTimestamp); return
+        }
+        guard geometry.contains(point) else { invalidate(.invalidTouch); return }
+        guard let sourceTime = lastSourceGazeTimestamp else { return }
+        guard now >= sourceTime else { invalidate(.invalidTimestamp); return }
+        guard now - sourceTime <= AirTraceDefaults.maximumSampleAgeSeconds else { invalidate(.stalePair); return }
+        rawTrace.append(point)
+        lastCaptureTimestamp = now
+        state = .tracing
     }
 
     /// Camera source liveness is independent of Vision's asynchronous hand results.
     public mutating func observeSource(captureTimestamp: Double, generation: UInt64, now: Double,
                                       geometry currentGeometry: RenderGeometry) {
         guard handOnly else { return }
-        if indexOnly, let drawingStartedAt, captureTimestamp.isFinite, captureTimestamp < drawingStartedAt { return }
+        if indexOnly || screenTouch, let drawingStartedAt, captureTimestamp.isFinite, captureTimestamp < drawingStartedAt { return }
         expireInputs(now: now, geometry: currentGeometry)
         guard state == .ready || state == .armed || state == .tracing else { return }
         let reason: AirTraceRejection?
@@ -220,7 +251,7 @@ public struct AirTraceSession: Sendable {
 
     public mutating func consumeHand(_ hand: AirTraceHandSample?, now: Double,
                                      geometry currentGeometry: RenderGeometry) {
-        guard handOnly, !indexOnly else { return }
+        guard handOnly, !indexOnly, !screenTouch else { return }
         guard currentGeometry == geometry else { invalidate(.geometryChanged); return }
         guard state == .ready || state == .tracing else { return }
         let sourceReason: AirTraceRejection? = lastSourceGazeTimestamp.map {
@@ -266,7 +297,8 @@ public struct AirTraceSession: Sendable {
         guard state == .tracing else { return }
         guard now.isFinite, let handTime = lastCaptureTimestamp, let sourceTime = lastSourceGazeTimestamp,
               now >= handTime, now >= sourceTime else { invalidate(.invalidTimestamp); return }
-        guard now - handTime <= AirTraceDefaults.maximumSampleAgeSeconds,
+        // A stationary touchscreen finger has no inference stream to expire; the camera must stay live.
+        guard screenTouch || now - handTime <= AirTraceDefaults.maximumSampleAgeSeconds,
               now - sourceTime <= AirTraceDefaults.maximumSampleAgeSeconds else {
             invalidate(.stalePair)
             return
@@ -368,6 +400,19 @@ public struct AirTraceSession: Sendable {
         guard let first = rawTrace.first, let last = rawTrace.last,
               hypot(last.x - first.x, last.y - first.y)
                 <= AirTraceDefaults.closureRadiusDiagonalFraction * geometry.diagonal else { invalidate(.openStroke); return }
+        if screenTouch {
+            var twiceArea = 0.0
+            var previous = first
+            for point in rawTrace.dropFirst() {
+                twiceArea += ((previous.x - first.x) / geometry.width) * ((point.y - first.y) / geometry.height)
+                    - ((point.x - first.x) / geometry.width) * ((previous.y - first.y) / geometry.height)
+                previous = point
+            }
+            let boundingArea = ((maxX - minX) / geometry.width) * ((maxY - minY) / geometry.height)
+            guard abs(twiceArea) / 2 > boundingArea * AirTraceDefaults.minimumTouchAreaBoundingFraction else {
+                invalidate(.degenerateStroke); return
+            }
+        }
         let center = ScreenPoint(x: minX + (maxX - minX) / 2, y: minY + (maxY - minY) / 2)
         candidate = RegionCandidate(
             normalizedOffset: ScreenPoint(x: (center.x - fixation.x) / geometry.width,

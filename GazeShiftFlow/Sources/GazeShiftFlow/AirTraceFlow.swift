@@ -155,6 +155,11 @@ public struct AirTraceFlow: Sendable {
         if state != .tracing && state != .armed { resetInputs() }
     }
 
+    public mutating func touchPoint(_ point: ScreenPoint, now: Double, geometry: RenderGeometry) {
+        session.consumeTouch(point, now: now, geometry: geometry)
+        if case .invalid = state { resetInputs() }
+    }
+
     public mutating func handOnlyResult(_ hand: NormalizedHandInput?, frame: CaptureFrameKey,
                                         now: Double, geometry: RenderGeometry) {
         expireInputs(now: now, geometry: geometry)

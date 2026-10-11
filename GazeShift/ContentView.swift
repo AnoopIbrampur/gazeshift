@@ -494,13 +494,15 @@ struct ContentView: View {
                 .padding(.horizontal, ScreenStyle.pagePadding)
                 .background(.black.opacity(0.65))
                 .accessibilityIdentifier("captureStatus")
+                .allowsHitTesting(false)
         }
     }
 
     private var controlsScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: ScreenStyle.spacing) {
-                AirMapControls(model: airTrace, startBlocker: airMapBlocker, onStart: startAirMap)
+                AirMapControls(model: airTrace, startBlocker: airMapBlocker,
+                               isRearScene: snapshot.mode == .liveRear, onStart: startAirMap)
                 Text("Eye tracking disabled · screen-fixed approximation.")
                     .font(.caption.weight(.semibold)).foregroundStyle(.orange)
                     .accessibilityIdentifier("eyeTrackingDisabledBanner")
@@ -512,7 +514,7 @@ struct ContentView: View {
                 if airTrace.reviewedRegion != nil {
                     Divider()
                     if let composition { ComparisonControls(mode: $viewMode, plan: composition.plan) }
-                    Text("The hand-drawn ellipse stays at fixed screen coordinates. Eye movement does not move it.")
+                    Text("The drawn ellipse stays at fixed screen coordinates. Eye movement does not move it.")
                         .font(.caption).foregroundStyle(.orange)
                     Text("The copy duplicates original pixels and covers destination content. Choose an offset that fits the view without overlapping the region.")
                         .font(.caption).foregroundStyle(ScreenStyle.secondary)
@@ -521,7 +523,9 @@ struct ContentView: View {
                     Text("Simulation unavailable — \(compositeFailure)").font(.caption).foregroundStyle(.orange)
                 }
                 Divider()
-                Text(snapshot.handMessage).font(.caption).foregroundStyle(ScreenStyle.secondary)
+                Text(snapshot.mode == .liveRear
+                     ? "Rear scene: draw directly on the screen after Start drawing."
+                     : snapshot.handMessage).font(.caption).foregroundStyle(ScreenStyle.secondary)
                 Text(snapshot.support?.text ?? "Camera support is checked when capture starts")
                     .font(.caption2).foregroundStyle(ScreenStyle.secondary)
                 HStack {
@@ -540,25 +544,60 @@ struct ContentView: View {
     private var viewport: some View {
         GeometryReader { measured in
             ZStack {
-                ScreenStyle.surface
+                ScreenStyle.surface.allowsHitTesting(false)
                 CameraView(packet: snapshot.renderPacket, onFailure: capture.rendererFailed,
                            composite: compositeUniforms, onCompositeFailure: { compositeFailure = $0 })
+                    .allowsHitTesting(false)
                 if snapshot.renderPacket == nil {
                     Text(snapshot.status.text).font(.subheadline).padding().foregroundStyle(ScreenStyle.secondary)
+                        .allowsHitTesting(false)
                 }
                 if snapshot.mode == .setupFront, let hand = snapshot.hand {
                     Circle().fill(.yellow).frame(width: ScreenStyle.cursorDiameter, height: ScreenStyle.cursorDiameter)
                         .position(x: hand.indexTip.x * measured.size.width, y: hand.indexTip.y * measured.size.height)
+                        .allowsHitTesting(false)
                 }
                 if let geometry { AirMapOverlay(model: airTrace, geometry: geometry) }
-                if let composition, compositeFailure == nil { compositionOutline(composition.plan) }
+                if let composition, compositeFailure == nil {
+                    compositionOutline(composition.plan).allowsHitTesting(false)
+                }
             }
-            .allowsHitTesting(false).clipped()
-            .overlay(Rectangle().stroke(ScreenStyle.secondary.opacity(0.3), lineWidth: 1))
+            .contentShape(Rectangle())
+            .gesture(rearDrawingGesture, including: rearTouchEnabled ? .all : .none)
+            .clipped()
+            .overlay(Rectangle().stroke(ScreenStyle.secondary.opacity(0.3), lineWidth: 1).allowsHitTesting(false))
             .onAppear { updateLayout(measured.frame(in: .global)) }
             .onChange(of: measured.frame(in: .global)) { _, frame in updateLayout(frame) }
             .onChange(of: displayScale) { _, _ in updateLayout(measured.frame(in: .global)) }
         }.accessibilityIdentifier("measuredViewport")
+    }
+
+    private var rearTouchEnabled: Bool {
+        guard snapshot.mode == .liveRear, snapshot.status == .ready,
+              let packet = snapshot.renderPacket, packet.mode == .liveRear,
+              packet.identity.generation == snapshot.generation,
+              packet.identity.isFresh(at: ProcessInfo.processInfo.systemUptime),
+              let geometry, let flow = airTrace.flow, flow.geometry == geometry,
+              flow.session.captureGeneration == snapshot.generation else { return false }
+        return flow.state == .armed || flow.state == .tracing
+    }
+
+    private var rearDrawingGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in recordRearTouch(value.location) }
+            .onEnded { value in
+                guard snapshot.mode == .liveRear, let flow = airTrace.flow,
+                      flow.geometry.mode == .rearLive,
+                      flow.session.captureGeneration == snapshot.generation,
+                      flow.state == .armed || flow.state == .tracing else { return }
+                recordRearTouch(value.location)
+                airTrace.finish()
+            }
+    }
+
+    private func recordRearTouch(_ location: CGPoint) {
+        guard rearTouchEnabled, let geometry else { return }
+        airTrace.touchPoint(ScreenPoint(x: Double(location.x), y: Double(location.y)), geometry: geometry)
     }
 
     private var currentRegion: ReviewedRegion? {
@@ -596,9 +635,13 @@ struct ContentView: View {
     }
 
     private var airMapBlocker: String? {
-        guard snapshot.mode == .setupFront else { return "Trace with Front setup, then switch to Rear scene" }
-        guard snapshot.status == .ready, snapshot.renderPacket != nil else { return "Waiting for a live front camera" }
+        guard snapshot.status == .ready, let packet = snapshot.renderPacket,
+              packet.mode == snapshot.mode, packet.identity.generation == snapshot.generation,
+              packet.identity.isFresh(at: ProcessInfo.processInfo.systemUptime) else {
+            return snapshot.mode == .liveRear ? "Waiting for a live rear camera" : "Waiting for a live front camera"
+        }
         guard geometry != nil else { return "Waiting for the measured display" }
+        if snapshot.mode == .liveRear { return nil }
         guard let hand = snapshot.hand, hand.identity.generation == snapshot.generation,
               hand.identity.isFresh(at: ProcessInfo.processInfo.systemUptime),
               hand.indexConfidence.isFinite,

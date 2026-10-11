@@ -939,6 +939,117 @@ final class ManualAirTraceModelTests: XCTestCase {
     }
 }
 
+/// Screen-touch adapter checks; camera capture and touch delivery still need device verification.
+@MainActor
+final class RearScreenTraceModelTests: XCTestCase {
+    private let events = PassthroughSubject<CaptureEvent, Never>()
+    private func geometry(_ mode: TrackingMode = .rearLive, landscape: Bool = false) throws -> RenderGeometry {
+        try RenderGeometry(width: landscape ? 400 : 300, height: landscape ? 300 : 400, scale: 3,
+                           orientation: landscape ? .landscapeLeft : .portrait,
+                           mode: mode, viewingSetupID: "fixed-display")
+    }
+    private func model() -> AirTraceModel {
+        let model = AirTraceModel()
+        model.attach(events: events)
+        return model
+    }
+    private func source(_ index: Int, mode: CaptureMode = .liveRear, generation: UInt64 = 1) -> FrameIdentity {
+        let time = ProcessInfo.processInfo.systemUptime
+        let identity = FrameIdentity(generation: generation, captureTimestamp: 5000 + Double(index), receivedAt: time)
+        events.send(.source(identity: identity, mode: mode))
+        return identity
+    }
+    private func trace(_ model: AirTraceModel, geometry: RenderGeometry, generation: UInt64 = 1) {
+        for index in 0...24 {
+            let identity = source(index, generation: generation)
+            let angle = 2 * Double.pi * Double(index % 24) / 24
+            model.touchPoint(ScreenPoint(x: 120 + 30 * cos(angle), y: 140 + 20 * sin(angle)),
+                             now: identity.receivedAt, geometry: geometry)
+        }
+    }
+
+    // Break caught: the app rejects rear drawing before any hand or eye observation is needed.
+    func testRearStartArmsWithoutHandOrEyes() throws {
+        let model = model()
+        let geometry = try geometry()
+        model.begin(geometry: geometry, generation: 1)
+        XCTAssertEqual(model.flow?.state, .armed)
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+        XCTAssertNil(model.reviewedRegion)
+    }
+
+    // Break caught: rear frames are rejected as front-only, or rear hand callbacks erase actual touches.
+    func testRearTouchUsesLandscapeViewportAndFreezesForReview() throws {
+        let model = model()
+        let geometry = try geometry(landscape: true)
+        model.begin(geometry: geometry, generation: 1)
+        trace(model, geometry: geometry)
+        let identity = source(25)
+        events.send(.hand(.success(nil), identity: identity, mode: .liveRear))
+        XCTAssertEqual(model.flow?.state, .tracing)
+        model.finish()
+        XCTAssertEqual(model.flow?.state, .candidateReady)
+        XCTAssertNil(model.reviewedRegion)
+        let points = model.flow?.rawTrace
+        model.touchPoint(ScreenPoint(x: 250, y: 250), geometry: geometry)
+        XCTAssertEqual(model.flow?.rawTrace, points)
+        model.accept()
+        let region = try XCTUnwrap(model.reviewedRegion)
+        XCTAssertEqual(region.displayGeometry, geometry)
+        let ellipse = try region.screenFixedEllipse(geometry: geometry)
+        XCTAssertEqual(ellipse.center.x, 120, accuracy: 1e-6)
+        XCTAssertEqual(ellipse.center.y, 140, accuracy: 1e-6)
+        model.nudgeOffset(dx: 20, dy: 0)
+        XCTAssertEqual(model.patchOffset, ScreenPoint(x: 20, y: 0))
+    }
+
+    // Break caught: source loss leaves a stale rear stroke that later touches can extend.
+    func testRearTouchStrokeClearsWhenSourceExpires() throws {
+        let model = model()
+        let geometry = try geometry()
+        model.begin(geometry: geometry, generation: 1)
+        let identity = source(0)
+        model.touchPoint(ScreenPoint(x: 100, y: 100), now: identity.receivedAt, geometry: geometry)
+        XCTAssertEqual(model.flow?.state, .tracing)
+        model.tick(now: identity.receivedAt + 0.251, geometry: geometry)
+        if case .invalid = model.flow?.state {} else { XCTFail("Stale rear stroke survived") }
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+        _ = source(1)
+        model.touchPoint(ScreenPoint(x: 130, y: 100), geometry: geometry)
+        XCTAssertTrue(model.flow?.rawTrace.isEmpty == true)
+    }
+
+    // Break caught: an accepted front handoff prevents replacing the region by a rear screen drawing.
+    func testRearStartReplacesTransferredFrontRegion() throws {
+        let model = model()
+        let front = try geometry(.frontSetup)
+        model.begin(geometry: front, generation: 1)
+        for index in 0...24 {
+            let identity = source(index, mode: .setupFront)
+            let angle = 2 * Double.pi * Double(index % 24) / 24
+            let hand = HandObservation(identity: identity,
+                indexTip: CGPoint(x: (120 + 30 * cos(angle)) / 300, y: (140 + 20 * sin(angle)) / 400),
+                thumbTip: nil, indexConfidence: 0.9, thumbConfidence: nil)
+            events.send(.hand(.success(hand), identity: identity, mode: .setupFront))
+        }
+        model.finish()
+        model.accept()
+        model.nudgeOffset(dx: 20, dy: 0)
+        model.prepareForRearSelection(geometry: front)
+        events.send(.reset(generation: 2, mode: .liveRear))
+        XCTAssertNotNil(model.rearRegion(for: try geometry()))
+        let rear = try geometry()
+        model.begin(geometry: rear, generation: 2)
+        XCTAssertEqual(model.flow?.state, .armed)
+        XCTAssertNil(model.reviewedRegion)
+        XCTAssertNil(model.patchOffset)
+        trace(model, geometry: rear, generation: 2)
+        model.finish()
+        model.accept()
+        XCTAssertEqual(model.reviewedRegion?.displayGeometry, rear)
+    }
+}
+
 /// Fixture checks for the opt-in demo fallback; they do not prove device accuracy.
 extension GazeSessionTests {
     func testClampedDemoMarkerPinsOffscreenGazeButBlinkStillHidesIt() throws {
