@@ -31,9 +31,14 @@ public struct GazeCalibration: Sendable {
 
         let rows = rawRows + penaltyRows
         let penalty = sqrt(regularization)
-        let design = Array(repeating: 1.0, count: rawRows) + [0, 0]
-            + horizontal.values + [penalty, 0] + vertical.values + [0, penalty]
-        let targets = samples.map(\.target.x) + [0, 0] + samples.map(\.target.y) + [0, 0]
+        // Explicit element types keep this concatenation within the type checker's time budget.
+        let interceptColumn: [Double] = Array(repeating: 1.0, count: rawRows) + [0, 0]
+        let horizontalColumn: [Double] = horizontal.values + [penalty, 0]
+        let verticalColumn: [Double] = vertical.values + [0, penalty]
+        let design: [Double] = interceptColumn + horizontalColumn + verticalColumn
+        let xTargets: [Double] = samples.map(\.target.x) + [0, 0]
+        let yTargets: [Double] = samples.map(\.target.y) + [0, 0]
+        let targets: [Double] = xTargets + yTargets
         let coefficients = try solve(design: design, targets: targets, rows: rows)
         return GazeCalibration(geometry: geometry,
                                mean: ScreenPoint(x: horizontal.mean, y: vertical.mean),

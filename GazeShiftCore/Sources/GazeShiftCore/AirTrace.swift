@@ -99,6 +99,7 @@ public struct AirTraceSession: Sendable {
     public let eyeStateDescription: String
     public let captureGeneration: UInt64
     private var lastCaptureTimestamp: Double?
+    private var lastSourceGazeTimestamp: Double?
 
     public init(geometry: RenderGeometry, fixation: ScreenPoint, eyeStateDescription: String, captureGeneration: UInt64) throws {
         guard geometry.mode == .frontSetup, geometry.contains(fixation),
@@ -111,6 +112,43 @@ public struct AirTraceSession: Sendable {
         self.captureGeneration = captureGeneration
     }
 
+    /// Validate every source eye event, even when hand inference skips its frame.
+    /// Invalid observations cannot be hidden by a later valid hand/gaze pair.
+    @discardableResult
+    public mutating func observeGaze(_ gaze: AirTraceGazeSample, now: Double,
+                                    geometry currentGeometry: RenderGeometry) -> Bool {
+        guard currentGeometry == geometry else { invalidate(.geometryChanged); return false }
+        expireInputs(now: now, geometry: currentGeometry)
+        guard state == .ready || state == .tracing else { return false }
+        let reason: AirTraceRejection?
+        if !gaze.qualityValid || gaze.point == nil { reason = .invalidGaze }
+        else if !now.isFinite || !gaze.captureTimestamp.isFinite || gaze.captureTimestamp < 0
+                    || now < gaze.captureTimestamp { reason = .invalidTimestamp }
+        else if gaze.generation != captureGeneration { reason = .generationChanged }
+        else if now - gaze.captureTimestamp > AirTraceDefaults.maximumSampleAgeSeconds { reason = .stalePair }
+        else { reason = gazeRejection(gaze) }
+        if let reason {
+            if state == .tracing { invalidate(reason) }
+            return false
+        }
+        lastSourceGazeTimestamp = max(lastSourceGazeTimestamp ?? gaze.captureTimestamp, gaze.captureTimestamp)
+        return true
+    }
+
+    /// Use a periodic watchdog as well as event callbacks: neither stream may silently stop mid-stroke.
+    /// Capture timestamps, not callback receipt times, bound source and hand age independently.
+    public mutating func expireInputs(now: Double, geometry currentGeometry: RenderGeometry) {
+        guard currentGeometry == geometry else { invalidate(.geometryChanged); return }
+        guard state == .tracing else { return }
+        guard now.isFinite, let handTime = lastCaptureTimestamp, let sourceTime = lastSourceGazeTimestamp,
+              now >= handTime, now >= sourceTime else { invalidate(.invalidTimestamp); return }
+        guard now - handTime <= AirTraceDefaults.maximumSampleAgeSeconds,
+              now - sourceTime <= AirTraceDefaults.maximumSampleAgeSeconds else {
+            invalidate(.stalePair)
+            return
+        }
+    }
+
     /// `now` and both capture timestamps use the same monotonic clock; generation identifies the AR session run.
     public mutating func consume(hand: AirTraceHandSample?, gaze: AirTraceGazeSample?, now: Double,
                                  geometry currentGeometry: RenderGeometry) {
@@ -120,7 +158,7 @@ public struct AirTraceSession: Sendable {
             if state == .tracing { invalidate(reason) }
             return
         }
-        guard let hand else { return } // Pair validation already checked both optional inputs.
+        guard let hand, let gaze else { return } // Pair validation already checked both optional inputs.
         let pinchDistance = hypot(hand.indexTip.x - hand.thumbTip.x, hand.indexTip.y - hand.thumbTip.y)
         if state == .ready {
             guard pinchDistance <= AirTraceDefaults.pinchCloseDiagonalFraction * geometry.diagonal else { return }
@@ -128,6 +166,7 @@ public struct AirTraceSession: Sendable {
         }
         rawTrace.append(hand.indexTip)
         lastCaptureTimestamp = hand.captureTimestamp
+        lastSourceGazeTimestamp = max(lastSourceGazeTimestamp ?? gaze.captureTimestamp, gaze.captureTimestamp)
         if pinchDistance >= AirTraceDefaults.pinchReleaseDiagonalFraction * geometry.diagonal {
             finishCandidate()
         }
@@ -164,6 +203,10 @@ public struct AirTraceSession: Sendable {
             guard hand.captureTimestamp - lastCaptureTimestamp <= AirTraceDefaults.maximumSampleAgeSeconds else { return .captureGap }
         }
         guard validHand(hand) else { return .invalidHand }
+        return gazeRejection(gaze)
+    }
+
+    private func gazeRejection(_ gaze: AirTraceGazeSample) -> AirTraceRejection? {
         guard gaze.qualityValid, let point = gaze.point, geometry.contains(point) else { return .invalidGaze }
         guard hypot(point.x - fixation.x, point.y - fixation.y)
                 <= AirTraceDefaults.fixationRadiusDiagonalFraction * geometry.diagonal else { return .fixationDrift }
@@ -209,5 +252,6 @@ public struct AirTraceSession: Sendable {
         candidate = nil
         reviewedRegion = nil
         lastCaptureTimestamp = nil
+        lastSourceGazeTimestamp = nil
     }
 }
