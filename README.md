@@ -1,5 +1,7 @@
 # GazeShift
 
+> **Anoop Ibrampur's version.** This repository is my independent continuation of GazeShift, copied with full history on 2026-10-12 from [Hussain-coder-eng/gazeshift](https://github.com/Hussain-coder-eng/gazeshift). The project was originally co-built with Hussain Altufayli at a hackathon (October 2026); everything up to commit `5a405be` is our joint work. Changes after that point are mine. Hussain continues his own version separately.
+
 GazeShift is a working title for an experimental phone display tool: draw an assumed affected region, review an approximate ellipse, and copy the original image content from that region to a chosen display offset.
 
 **Current direction: manual screen-space approximation using front-camera index tracing or rear screen drawing, with no eye tracking.** The prior thumb/pinch build `1011.18.10` was installed on a physical **iPhone 15 Pro Max**, but the user reported that their physical tracing attempt produced no line and failed. The user explicitly dropped thumb/pinch input. A successful end-to-end phone demo remains unverified.
@@ -19,7 +21,7 @@ Success means a playable recording of actual air tracing, explicit review, rear-
 - [Project context and working instructions](PROJECT_CONTEXT.md): current scope, architecture and evidence limits.
 - [Six-hour build plan](SIX_HOUR_PLAN.md): concise manual-flow implementation and device checks.
 - [Historical build prompts](BUILD_PROMPTS.md): superseded gaze requirements; do not execute them as the current spec.
-- [Private GitHub repository](https://github.com/Hussain-coder-eng/gazeshift).
+- [This repository](https://github.com/AnoopIbrampur/gazeshift) (Anoop's version) · [original shared repository](https://github.com/Hussain-coder-eng/gazeshift).
 - [ChatGPT project](https://chatgpt.com/g/g-p-6acbc5e009008191a0d00a958ec143d0/project).
 
 The [rear gaze blocker](docs/P2_REAR_GAZE_BLOCKER.md), [front diagnostic blocker](docs/P2_FRONT_DIAGNOSTIC_BLOCKER.md) and [off-screen diagnostics](docs/P2_OFFSCREEN_DIAGNOSTICS.md) preserve earlier results. They describe the superseded gaze approach, not current acceptance gates.
