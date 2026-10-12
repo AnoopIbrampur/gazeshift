@@ -22,6 +22,8 @@ Success means a playable recording of actual air tracing, explicit review, rear-
 - [Private GitHub repository](https://github.com/Hussain-coder-eng/gazeshift).
 - [ChatGPT project](https://chatgpt.com/g/g-p-6acbc5e009008191a0d00a958ec143d0/project).
 
+[What we tried](docs/HISTORY.md) records every approach in order (gaze-driven, pivot, alternatives) with PR numbers and outcomes. [Flow integration](docs/FLOW_INTEGRATION.md), the [device checklist](docs/P5_CHALLENGE_MATRIX.md) and the [pitch outline](docs/PITCH_OUTLINE.md) describe the current flow.
+
 The [rear gaze blocker](docs/P2_REAR_GAZE_BLOCKER.md), [front diagnostic blocker](docs/P2_FRONT_DIAGNOSTIC_BLOCKER.md) and [off-screen diagnostics](docs/P2_OFFSCREEN_DIAGNOSTICS.md) preserve earlier results. They describe the superseded gaze approach, not current acceptance gates.
 
 ## Evidence and boundaries
