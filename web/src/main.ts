@@ -246,14 +246,17 @@ canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (airDrawing || phase.kind !== 'tracing' || !canvas.hasPointerCapture(e.pointerId)) return;
+  // Armed too: if the touch-down landed before a fresh frame, the stroke starts at the first usable point.
+  if (airDrawing || (phase.kind !== 'armed' && phase.kind !== 'tracing') || !canvas.hasPointerCapture(e.pointerId)) return;
   const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e];
   for (const ev of events.length ? events : [e]) consumePoint(toView(ev), performance.now());
 });
 const endPointer = (e: PointerEvent) => {
   if (airDrawing || !canvas.hasPointerCapture(e.pointerId)) return;
   canvas.releasePointerCapture(e.pointerId);
-  finishDrawing(); // iOS rear touch: lifting the finger freezes the candidate for review
+  // iOS rear touch: lifting the finger freezes the candidate for review. A touch that never produced a
+  // usable point leaves the session armed instead of failing it.
+  if (phase.kind === 'tracing') finishDrawing();
 };
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', (e) => { if (canvas.hasPointerCapture(e.pointerId)) invalidate('invalidTouch'); });

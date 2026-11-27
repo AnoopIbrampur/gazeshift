@@ -21,9 +21,29 @@ export class CameraError extends Error {
 }
 
 /** Human-readable reasons for the common getUserMedia failures (including Meet holding the webcam). */
+const CAMERA_TIMEOUT_MS = 15000;
+
+/** getUserMedia can wait forever on an unanswered permission prompt; give up visibly instead. */
+function withTimeout(request: Promise<MediaStream>, ms: number): Promise<MediaStream> {
+  return new Promise((resolve, reject) => {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      reject(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+    }, ms);
+    request.then((stream) => {
+      clearTimeout(timer);
+      // A stream granted after we gave up must not keep the camera light on.
+      if (timedOut) stream.getTracks().forEach((t) => t.stop()); else resolve(stream);
+    }, (err) => { clearTimeout(timer); if (!timedOut) reject(err); });
+  });
+}
+
 export function describeCameraError(err: unknown): CameraError {
   const name = (err as { name?: string })?.name ?? '';
   switch (name) {
+    case 'TimeoutError':
+      return new CameraError('The camera didn’t start. Check for a permission prompt in the address bar (and macOS System Settings → Privacy → Camera), then press Retry — or use the sample scene.', 'timeout');
     case 'NotAllowedError':
     case 'SecurityError':
       return new CameraError('Camera permission was denied. Allow camera access in the browser’s site settings and press Retry — or use the sample scene.', 'denied');
@@ -61,12 +81,12 @@ export async function openCamera(video: HTMLVideoElement, request: CameraRequest
   let stream: MediaStream;
   try {
     // `ideal` (not `exact`) so single-camera laptops still open their only camera.
-    stream = await navigator.mediaDevices.getUserMedia({
+    stream = await withTimeout(navigator.mediaDevices.getUserMedia({
       audio: false,
       video: 'deviceId' in request
         ? { deviceId: { exact: request.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
         : { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
-    });
+    }), CAMERA_TIMEOUT_MS);
   } catch (err) {
     throw describeCameraError(err);
   }
