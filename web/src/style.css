@@ -1,0 +1,70 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --panel: #131c2e;
+  --line: #24314a;
+  --text: #e8edf5;
+  --muted: #9fb0c8;
+  --accent: #00e5ff;
+  --yellow: #ffd400;
+  --warn: #ffb020;
+  --error: #ff6b7a;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+.app { max-width: 980px; margin: 0 auto; padding: 16px 16px max(16px, env(safe-area-inset-bottom)); }
+.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
+h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
+.tag { font-size: 0.7rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
+.sub { margin: 4px 0 0; color: var(--muted); font-size: 0.92rem; max-width: 560px; }
+button {
+  font: inherit; font-size: 0.92rem; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 9px 14px; cursor: pointer; min-height: 40px; touch-action: manipulation;
+}
+button:hover:not(:disabled) { border-color: #3a4d70; }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: #0a6e80; border-color: #0a8aa0; font-weight: 600; }
+button.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.sources { display: flex; gap: 6px; flex-wrap: wrap; }
+.stage-wrap { display: flex; justify-content: center; }
+.stage { position: relative; background: #000; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); max-width: 100%; }
+#view { display: block; touch-action: none; cursor: crosshair; }
+#video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.badge, .perf, .sim-label {
+  position: absolute; font-size: 0.75rem; padding: 4px 8px; border-radius: 8px; background: rgba(0, 0, 0, 0.6);
+  pointer-events: none; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+.badge { top: 10px; left: 10px; }
+.badge.sample { background: rgba(255, 176, 32, 0.92); color: #1a1200; font-weight: 700; }
+.perf { bottom: 10px; left: 10px; font-family: ui-monospace, Menlo, monospace; color: #b8f5ff; }
+.sim-label { top: 10px; right: 10px; color: var(--warn); font-weight: 600; }
+.panel { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; background: rgba(11, 18, 32, 0.92); }
+.panel h2 { margin: 0 0 6px; }
+.panel p { color: var(--muted); max-width: 420px; margin: 0 0 14px; }
+.panel.error h2 { color: var(--error); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.controls { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-top: 12px; }
+.status { margin: 0; font-weight: 600; }
+.hint { margin: 4px 0 10px; color: var(--muted); font-size: 0.92rem; }
+.hint.warn { color: var(--warn); }
+.segmented { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.offset { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.pad { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 4px; }
+.pad button { padding: 0; min-height: 44px; font-size: 1.1rem; }
+.pad [data-dy="-1"] { grid-column: 2; grid-row: 1; }
+.pad [data-dx="-1"] { grid-column: 1; grid-row: 2; }
+.pad [data-dy="1"] { grid-column: 2; grid-row: 2; }
+.pad [data-dx="1"] { grid-column: 3; grid-row: 2; }
+.mono { font-family: ui-monospace, Menlo, monospace; color: var(--muted); margin: 0 0 4px; font-size: 0.85rem; }
+.placement-error { color: var(--error); margin: 0 0 8px; font-weight: 600; font-size: 0.9rem; }
+.foot { margin-top: 14px; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+.foot a { color: var(--accent); }
+.disclaimer { border-left: 3px solid var(--warn); padding-left: 10px; }
+@media (max-width: 699px) {
+  .app { padding: 10px 12px; }
+  h1 { font-size: 1.25rem; }
+  .sub { font-size: 0.85rem; }
+}
+select { font: inherit; font-size: 0.9rem; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 40px; max-width: 260px; }
