@@ -13,7 +13,8 @@ Draw a closed loop around part of the live view, review its bounding ellipse, ac
 ```
 camera frame (getUserMedia → <video>, requestVideoFrameCallback)
   → draw: cover-fit into the original buffer (front camera mirrored once)
-  → fit: pointer stroke → closure / area checks → min/max bounding ellipse   [on Finish]
+  → input: pointer stroke, or index fingertip (MediaPipe landmark 8) in air-drawing mode
+  → fit: stroke → closure / area checks → min/max bounding ellipse   [on Finish]
   → place: enclosing rect + user offset → bounds + overlap validation (reject, never clamp)
   → composite: original → copy (reads original pixels only) → blur last, clipped to the ellipse
   → overlay: trace, start dot + closure ring, ellipse, copy outline, FPS / ms
@@ -22,6 +23,7 @@ camera frame (getUserMedia → <video>, requestVideoFrameCallback)
 - **Geometry** (`web/src/geometry.ts`) is a line-for-line port of the iOS core: `AirTraceSession.finishCandidate`, `PlacementPlanner.planScreenFixed` and `CompositionPlanner.planScreenFixed`. Same constants: ≥ 20 distinct points, closure within 0.03 × viewport diagonal, a non-degenerate shoelace area, and edge-touching counts as overlap. Its Vitest suite ports the Swift test cases.
 - **Compositor** (`web/src/compositor.ts`) is Canvas 2D. The blur is a downscale/upscale pass, so it behaves the same in Chrome and iOS Safari.
 - **Camera** (`web/src/sources.ts`): front/rear selection, a device picker (prefers an iPhone used as a Mac webcam via Continuity Camera), clear permission/busy/timeout errors, and a labeled synthetic sample scene as the fallback.
+- **Air drawing (beta)** (`web/src/handDrawing.ts`): MediaPipe HandLandmarker tracks the index fingertip (landmark 8) on the displayed, already mirrored frame, so its coordinates map straight onto the screen. The fingertip feeds the same closure/area/ellipse checks as touch drawing; press **Finish shape** at the start dot. Losing the finger for more than 0.5 s clears the stroke. The WASM runtime and model (~27 MB) are bundled under `web/public/mediapipe` and load only when air drawing is first turned on. It uses the GPU delegate, falls back to CPU, and is warmed up while loading. The overlay adds `hand N ms` (inference time per frame).
 - **Latency note:** the on-screen ms figure is compositor processing time per frame, not end-to-end camera-to-display latency.
 
 Run locally (camera access needs `localhost` or HTTPS):
