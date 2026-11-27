@@ -62,7 +62,7 @@ let airDrawing = false;
 const hand = new HandDrawing();
 
 const OFFSET_STEP = 16;
-const BLUR_STRENGTH = 14; // downscale factor of the simulated blur (visual strength, not a vision model)
+const BLUR_STRENGTH = 40; // downscale factor of the simulated blur (visual strength, not a vision model)
 
 const rejectionText: Record<string, string> = {
   insufficientSamples: 'Too few points — draw a bigger loop (at least 20 distinct points).',

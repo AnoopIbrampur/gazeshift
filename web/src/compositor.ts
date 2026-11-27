@@ -82,6 +82,15 @@ export class Compositor {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(this.small, 0, 0, sw, sh, bx, by, bw, bh);
+      // Opaque scotoma-style patch on top: solid in the middle, feathered at the rim.
+      ctx.translate(center.x * dpr, center.y * dpr);
+      ctx.scale(radii.x * dpr, radii.y * dpr);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0, 'rgba(48,48,52,1)');
+      g.addColorStop(0.7, 'rgba(48,48,52,1)');
+      g.addColorStop(1, 'rgba(48,48,52,0.55)');
+      ctx.fillStyle = g;
+      ctx.fillRect(-1, -1, 2, 2);
       ctx.restore();
     }
   }
