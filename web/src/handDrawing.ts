@@ -59,6 +59,8 @@ export class HandDrawing {
     return true;
   }
 
+  isReady(): boolean { return this.landmarker != null; }
+
   reset(): void { this.tip = null; this.lastSeen = 0; }
 
   /** Runs one detection on the displayed frame. Call once per new camera frame. */

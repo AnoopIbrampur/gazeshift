@@ -392,11 +392,22 @@ function drawOverlay(ctx: CanvasRenderingContext2D, plan: CompositionPlan | null
     if (tip) {
       ctx.fillStyle = '#ffd400';
       ctx.strokeStyle = '#000';
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(tip.x, tip.y, 8, 0, Math.PI * 2);
+      ctx.arc(tip.x, tip.y, 14, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
+    // Always say whether a hand is being tracked, so "nothing happens" is never ambiguous.
+    const label = !hand.isReady() ? 'Loading hand tracker…' : tip ? 'Fingertip tracked' : 'No hand detected — hold up your index finger, palm to camera';
+    ctx.font = '600 14px system-ui, -apple-system, sans-serif';
+    const w = ctx.measureText(label).width + 16;
+    ctx.fillStyle = tip ? 'rgba(0,120,60,0.85)' : 'rgba(160,40,50,0.85)';
+    ctx.fillRect(viewport.width / 2 - w / 2, 10, w, 26);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, viewport.width / 2, 23);
   }
   ctx.restore();
 }
