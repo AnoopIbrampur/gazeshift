@@ -166,7 +166,8 @@ function onSourceChanged(): void {
     || (source?.kind === 'camera' && 'facing' in lastRequest && b.dataset.source === currentFacing)));
   // An in-progress stroke cannot continue across a source switch; a reviewed region is screen-fixed and stays.
   if (phase.kind === 'armed' || phase.kind === 'tracing') invalidate('stalePair');
-  airBtn.disabled = !(source?.kind === 'camera' && source.mirrored);
+  airBtn.disabled = source?.kind !== 'camera';
+  if (source?.kind !== 'camera' && airDrawing) void setAirDrawing(false);
   render();
 }
 
@@ -427,7 +428,7 @@ function frame(): void {
 
   const t0 = performance.now();
   if (!compositor.drawOriginal(source)) return;
-  if (airDrawing && source.kind === 'camera') {
+  if (airDrawing && source.kind === 'camera' && isNewFrame) {
     const sample = hand.detect(compositor.original, now);
     if (sample.kind === 'point' && (phase.kind === 'armed' || phase.kind === 'tracing')) {
       consumePoint({ x: sample.x * viewport.width, y: sample.y * viewport.height }, now);
