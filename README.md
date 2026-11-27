@@ -1,5 +1,41 @@
 # GazeShift
 
+**▶ Live web demo: [anoopibrampur.github.io/gazeshift](https://anoopibrampur.github.io/gazeshift/)**. Works with a laptop webcam (Chrome, Safari) or on iPhone Safari, with a built-in sample scene if no camera is available. Everything runs on-device in the browser.
+
+![GazeShift web demo: a hand-drawn region is blurred to simulate a blind spot, and a live copy of it is placed where it can be seen](docs/web-demo.png)
+
+## Web demo
+
+Draw a closed loop around part of the live view, review its bounding ellipse, accept it, then move a live copy of that area with the arrows. Compare **Original / Simulated blur / Simulated blur + copy**. The overlay shows frames per second and per-frame processing time.
+
+**Architecture (one frame):**
+
+```
+camera frame (getUserMedia → <video>, requestVideoFrameCallback)
+  → draw: cover-fit into the original buffer (front camera mirrored once)
+  → fit: pointer stroke → closure / area checks → min/max bounding ellipse   [on Finish]
+  → place: enclosing rect + user offset → bounds + overlap validation (reject, never clamp)
+  → composite: original → copy (reads original pixels only) → blur last, clipped to the ellipse
+  → overlay: trace, start dot + closure ring, ellipse, copy outline, FPS / ms
+```
+
+- **Geometry** (`web/src/geometry.ts`) is a line-for-line port of the iOS core: `AirTraceSession.finishCandidate`, `PlacementPlanner.planScreenFixed` and `CompositionPlanner.planScreenFixed`. Same constants: ≥ 20 distinct points, closure within 0.03 × viewport diagonal, a non-degenerate shoelace area, and edge-touching counts as overlap. Its Vitest suite ports the Swift test cases.
+- **Compositor** (`web/src/compositor.ts`) is Canvas 2D. The blur is a downscale/upscale pass, so it behaves the same in Chrome and iOS Safari.
+- **Camera** (`web/src/sources.ts`): front/rear selection, a device picker (prefers an iPhone used as a Mac webcam via Continuity Camera), clear permission/busy/timeout errors, and a labeled synthetic sample scene as the fallback.
+- **Latency note:** the on-screen ms figure is compositor processing time per frame, not end-to-end camera-to-display latency.
+
+Run locally (camera access needs `localhost` or HTTPS):
+
+```bash
+cd web && npm install && npm run dev     # npm test · npm run build
+```
+
+Deployed by `.github/workflows/pages.yml` on pushes to `main`.
+
+**Credits:** the GazeShift iOS app (Swift, ARKit, Vision, Metal) was co-built with **Hussain Altufayli** at a hackathon in October 2026; the screen-fixed geometry ported here comes from that joint iOS core. The **web port is by Anoop Ibrampur**.
+
+## iOS app
+
 > **Anoop Ibrampur's version.** This repository is my independent continuation of GazeShift, copied with full history on 2026-10-12 from [Hussain-coder-eng/gazeshift](https://github.com/Hussain-coder-eng/gazeshift). The project was originally co-built with Hussain Altufayli at a hackathon (October 2026); everything up to commit `5a405be` is our joint work. Changes after that point are mine. Hussain continues his own version separately.
 
 GazeShift is a working title for an experimental phone display tool: draw an assumed affected region, review an approximate ellipse, and copy the original image content from that region to a chosen display offset.
